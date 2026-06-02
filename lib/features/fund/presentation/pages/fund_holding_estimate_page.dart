@@ -78,6 +78,28 @@ class _FundHoldingEstimatePageState
     await _refreshHolding(input);
   }
 
+  Future<void> _openEditHoldingPage(FundHoldingInput holding) async {
+    final updated = await Navigator.of(context).push<FundHoldingInput>(
+      MaterialPageRoute(
+        builder: (_) => FundHoldingEntryPage(initialHolding: holding),
+      ),
+    );
+    if (updated == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      final index = _holdings.indexWhere((item) => item.id == updated.id);
+      if (index == -1) {
+        _holdings.add(updated);
+      } else {
+        _holdings[index] = updated;
+      }
+      _holdingStates[updated.id] = const AsyncLoading();
+    });
+    await _refreshHolding(updated);
+  }
+
   Future<void> _refreshHolding(FundHoldingInput input) async {
     setState(() => _holdingStates[input.id] = const AsyncLoading());
     final result = await AsyncValue.guard(() async {
@@ -121,6 +143,12 @@ class _FundHoldingEstimatePageState
 
   @override
   Widget build(BuildContext context) {
+    final estimates = _holdings
+        .map((holding) => _holdingStates[holding.id])
+        .whereType<AsyncData<FundHoldingEstimate>>()
+        .map((state) => state.value)
+        .toList();
+
     return Scaffold(
       appBar: AppBar(
         title: const Text('基金收益估算'),
@@ -137,12 +165,17 @@ class _FundHoldingEstimatePageState
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
           children: [
+            if (_holdings.isNotEmpty) ...[
+              _PortfolioOverview(holdings: _holdings, estimates: estimates),
+              const SizedBox(height: 18),
+            ],
             _HoldingsByChannelSection(
               holdings: _holdings,
               states: _holdingStates,
               isLoading: _isLoadingHoldings,
               loadError: _loadHoldingsError,
               onRefresh: _refreshHolding,
+              onEdit: _openEditHoldingPage,
               onRemove: _removeHolding,
             ),
           ],
@@ -152,8 +185,191 @@ class _FundHoldingEstimatePageState
   }
 }
 
+class _PortfolioOverview extends StatelessWidget {
+  const _PortfolioOverview({required this.holdings, required this.estimates});
+
+  final List<FundHoldingInput> holdings;
+  final List<FundHoldingEstimate> estimates;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final channels = holdings.map((holding) => holding.channel).toSet().length;
+    final totalCost = estimates.fold<double>(0, (sum, item) => sum + item.cost);
+    final totalValue = estimates.fold<double>(
+      0,
+      (sum, item) => sum + item.estimatedValue,
+    );
+    final totalReturn = totalValue - totalCost;
+    final hasEstimate = estimates.isNotEmpty;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.primaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.all(8),
+                    child: Icon(
+                      Icons.pie_chart,
+                      size: 20,
+                      color: colorScheme.onPrimaryContainer,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '组合概览',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${holdings.length} 笔持仓 · $channels 个渠道',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: colorScheme.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            _OverviewMetricGrid(
+              items: [
+                _OverviewMetricItem(
+                  label: '估算总市值',
+                  value: hasEstimate ? _formatMoney(totalValue) : '计算中',
+                ),
+                _OverviewMetricItem(
+                  label: '持仓成本',
+                  value: hasEstimate ? _formatMoney(totalCost) : '计算中',
+                ),
+                _OverviewMetricItem(
+                  label: '总收益',
+                  value: hasEstimate ? _formatSignedMoney(totalReturn) : '计算中',
+                  valueColor: hasEstimate
+                      ? _returnColor(totalReturn)
+                      : colorScheme.onSurface,
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewMetricGrid extends StatelessWidget {
+  const _OverviewMetricGrid({required this.items});
+
+  final List<_OverviewMetricItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 560 ? 3 : 1;
+        const spacing = 8.0;
+        final tileWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: tileWidth,
+                child: _OverviewMetricTile(item: item),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _OverviewMetricTile extends StatelessWidget {
+  const _OverviewMetricTile({required this.item});
+
+  final _OverviewMetricItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surface,
+        border: Border.all(color: colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text(
+              item.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 5),
+            Text(
+              item.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: item.valueColor,
+                fontWeight: FontWeight.w800,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _OverviewMetricItem {
+  const _OverviewMetricItem({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final Color? valueColor;
+}
+
 class FundHoldingEntryPage extends ConsumerStatefulWidget {
-  const FundHoldingEntryPage({super.key});
+  const FundHoldingEntryPage({super.key, this.initialHolding});
+
+  final FundHoldingInput? initialHolding;
 
   @override
   ConsumerState<FundHoldingEntryPage> createState() =>
@@ -169,6 +385,22 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
 
   DateTime? _purchaseDate;
   var _isSaving = false;
+
+  bool get _isEditing => widget.initialHolding != null;
+
+  @override
+  void initState() {
+    super.initState();
+    final holding = widget.initialHolding;
+    if (holding == null) {
+      return;
+    }
+    _codeController.text = holding.code;
+    _sharesController.text = _formatEditableNumber(holding.shares);
+    _channelController.text = holding.channel;
+    _purchaseNavController.text = _formatEditableNumber(holding.purchaseNav);
+    _purchaseDate = holding.purchaseDate;
+  }
 
   @override
   void dispose() {
@@ -214,9 +446,13 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
 
     setState(() => _isSaving = true);
     try {
-      final input = await ref
-          .read(fundHoldingRepositoryProvider)
-          .insertHolding(draft);
+      final repository = ref.read(fundHoldingRepositoryProvider);
+      final input = _isEditing
+          ? await repository.updateHolding(
+              id: widget.initialHolding!.id,
+              draft: draft,
+            )
+          : await repository.insertHolding(draft);
       if (!mounted) {
         return;
       }
@@ -235,7 +471,10 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('新增持仓'), centerTitle: false),
+      appBar: AppBar(
+        title: Text(_isEditing ? '编辑持仓' : '新增持仓'),
+        centerTitle: false,
+      ),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -250,6 +489,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
               onPickPurchaseDate: _pickPurchaseDate,
               onSubmit: _submit,
               isSaving: _isSaving,
+              isEditing: _isEditing,
             ),
           ],
         ),
@@ -269,6 +509,7 @@ class _InputSection extends StatelessWidget {
     required this.onPickPurchaseDate,
     required this.onSubmit,
     required this.isSaving,
+    required this.isEditing,
   });
 
   final GlobalKey<FormState> formKey;
@@ -280,12 +521,15 @@ class _InputSection extends StatelessWidget {
   final VoidCallback onPickPurchaseDate;
   final VoidCallback onSubmit;
   final bool isSaving;
+  final bool isEditing;
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        color: colorScheme.surface,
+        border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -295,7 +539,43 @@ class _InputSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('持仓信息', style: Theme.of(context).textTheme.titleMedium),
+              Row(
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: colorScheme.primaryContainer,
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: Icon(
+                        Icons.edit_note,
+                        size: 20,
+                        color: colorScheme.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '持仓信息',
+                          style: Theme.of(context).textTheme.titleMedium
+                              ?.copyWith(fontWeight: FontWeight.w800),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '按实际购买记录填写，保存后自动估算收益',
+                          style: Theme.of(context).textTheme.bodySmall
+                              ?.copyWith(color: colorScheme.onSurfaceVariant),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
               const SizedBox(height: 16),
               TextFormField(
                 controller: codeController,
@@ -371,8 +651,8 @@ class _InputSection extends StatelessWidget {
                         height: 16,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.add),
-                label: const Text('添加并计算'),
+                    : Icon(isEditing ? Icons.save_outlined : Icons.add),
+                label: Text(isEditing ? '保存并计算' : '添加并计算'),
               ),
             ],
           ),
@@ -389,6 +669,7 @@ class _HoldingsByChannelSection extends StatelessWidget {
     required this.isLoading,
     required this.loadError,
     required this.onRefresh,
+    required this.onEdit,
     required this.onRemove,
   });
 
@@ -397,6 +678,7 @@ class _HoldingsByChannelSection extends StatelessWidget {
   final bool isLoading;
   final Object? loadError;
   final ValueChanged<FundHoldingInput> onRefresh;
+  final ValueChanged<FundHoldingInput> onEdit;
   final ValueChanged<FundHoldingInput> onRemove;
 
   @override
@@ -442,6 +724,7 @@ class _HoldingsByChannelSection extends StatelessWidget {
             holdings: channelHoldings,
             states: states,
             onRefresh: onRefresh,
+            onEdit: onEdit,
             onRemove: onRemove,
           ),
         );
@@ -456,6 +739,7 @@ class _ChannelGroupCard extends StatelessWidget {
     required this.holdings,
     required this.states,
     required this.onRefresh,
+    required this.onEdit,
     required this.onRemove,
   });
 
@@ -463,6 +747,7 @@ class _ChannelGroupCard extends StatelessWidget {
   final List<FundHoldingInput> holdings;
   final Map<int, AsyncValue<FundHoldingEstimate>> states;
   final ValueChanged<FundHoldingInput> onRefresh;
+  final ValueChanged<FundHoldingInput> onEdit;
   final ValueChanged<FundHoldingInput> onRemove;
 
   @override
@@ -480,22 +765,21 @@ class _ChannelGroupCard extends StatelessWidget {
     final totalReturn = totalValue - totalCost;
     final totalRate = totalCost == 0 ? 0.0 : totalReturn / totalCost;
 
+    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        color: colorScheme.surface,
+        border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(14),
+        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Row(
               children: [
-                Icon(
-                  Icons.account_balance_wallet,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
+                Icon(Icons.account_balance_wallet, color: colorScheme.primary),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -505,7 +789,25 @@ class _ChannelGroupCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                Text('${holdings.length} 笔'),
+                DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: colorScheme.secondaryContainer,
+                    borderRadius: BorderRadius.circular(8),
+                  ),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 5,
+                    ),
+                    child: Text(
+                      '${holdings.length} 笔',
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: colorScheme.onSecondaryContainer,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ),
               ],
             ),
             if (estimates.isNotEmpty) ...[
@@ -523,6 +825,7 @@ class _ChannelGroupCard extends StatelessWidget {
                 holding: holding,
                 state: states[holding.id] ?? const AsyncLoading(),
                 onRefresh: () => onRefresh(holding),
+                onEdit: () => onEdit(holding),
                 onRemove: () => onRemove(holding),
               ),
               if (holding != holdings.last) const SizedBox(height: 10),
@@ -549,9 +852,7 @@ class _ChannelSummary extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = totalReturn >= 0
-        ? Colors.red.shade700
-        : Colors.green.shade700;
+    final color = _returnColor(totalReturn);
     return DecoratedBox(
       decoration: BoxDecoration(
         color: Theme.of(context).colorScheme.surfaceContainerHighest,
@@ -630,20 +931,23 @@ class _HoldingCard extends StatelessWidget {
     required this.holding,
     required this.state,
     required this.onRefresh,
+    required this.onEdit,
     required this.onRemove,
   });
 
   final FundHoldingInput holding;
   final AsyncValue<FundHoldingEstimate> state;
   final VoidCallback onRefresh;
+  final VoidCallback onEdit;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surface,
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        color: colorScheme.surfaceContainerLowest,
+        border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -654,11 +958,13 @@ class _HoldingCard extends StatelessWidget {
             holding: holding,
             message: error.toString(),
             onRefresh: onRefresh,
+            onEdit: onEdit,
             onRemove: onRemove,
           ),
           data: (estimate) => _HoldingEstimateResult(
             estimate: estimate,
             onRefresh: onRefresh,
+            onEdit: onEdit,
             onRemove: onRemove,
           ),
         ),
@@ -671,18 +977,18 @@ class _HoldingEstimateResult extends StatelessWidget {
   const _HoldingEstimateResult({
     required this.estimate,
     required this.onRefresh,
+    required this.onEdit,
     required this.onRemove,
   });
 
   final FundHoldingEstimate estimate;
   final VoidCallback onRefresh;
+  final VoidCallback onEdit;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
-    final color = estimate.isProfitable
-        ? Colors.red.shade700
-        : Colors.green.shade700;
+    final color = _returnColor(estimate.totalReturn);
     final realtime = estimate.realtimeEstimate;
 
     return Column(
@@ -692,22 +998,14 @@ class _HoldingEstimateResult extends StatelessWidget {
           title: '${realtime.name} (${realtime.code})',
           subtitle: '买入日 ${_formatDate(estimate.input.purchaseDate)}',
           onRefresh: onRefresh,
+          onEdit: onEdit,
           onRemove: onRemove,
         ),
         const SizedBox(height: 12),
-        Text(
-          _formatSignedMoney(estimate.totalReturn),
-          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-            color: color,
-            fontWeight: FontWeight.w800,
-          ),
-        ),
-        Text(
-          '总收益 ${_formatPercent(estimate.totalReturnRate)}',
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: color,
-            fontWeight: FontWeight.w700,
-          ),
+        _ReturnBanner(
+          totalReturn: estimate.totalReturn,
+          totalReturnRate: estimate.totalReturnRate,
+          color: color,
         ),
         const SizedBox(height: 12),
         _MetricGrid(
@@ -737,6 +1035,80 @@ class _HoldingEstimateResult extends StatelessWidget {
           ],
         ),
       ],
+    );
+  }
+}
+
+class _ReturnBanner extends StatelessWidget {
+  const _ReturnBanner({
+    required this.totalReturn,
+    required this.totalReturnRate,
+    required this.color,
+  });
+
+  final double totalReturn;
+  final double totalReturnRate;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withAlpha(20),
+        border: Border.all(color: color.withAlpha(72)),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '总收益',
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    _formatSignedMoney(totalReturn),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 10),
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: color.withAlpha(28),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 7,
+                ),
+                child: Text(
+                  _formatPercent(totalReturnRate),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    color: color,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -886,12 +1258,14 @@ class _HoldingError extends StatelessWidget {
     required this.holding,
     required this.message,
     required this.onRefresh,
+    required this.onEdit,
     required this.onRemove,
   });
 
   final FundHoldingInput holding;
   final String message;
   final VoidCallback onRefresh;
+  final VoidCallback onEdit;
   final VoidCallback onRemove;
 
   @override
@@ -903,6 +1277,7 @@ class _HoldingError extends StatelessWidget {
           title: holding.code,
           subtitle: '买入日 ${_formatDate(holding.purchaseDate)}',
           onRefresh: onRefresh,
+          onEdit: onEdit,
           onRemove: onRemove,
         ),
         const SizedBox(height: 8),
@@ -920,12 +1295,14 @@ class _HoldingHeader extends StatelessWidget {
     required this.title,
     required this.subtitle,
     required this.onRefresh,
+    required this.onEdit,
     required this.onRemove,
   });
 
   final String title;
   final String subtitle;
   final VoidCallback onRefresh;
+  final VoidCallback onEdit;
   final VoidCallback onRemove;
 
   @override
@@ -959,6 +1336,11 @@ class _HoldingHeader extends StatelessWidget {
           icon: const Icon(Icons.refresh),
         ),
         IconButton(
+          onPressed: onEdit,
+          tooltip: '编辑持仓',
+          icon: const Icon(Icons.edit_outlined),
+        ),
+        IconButton(
           onPressed: onRemove,
           tooltip: '删除持仓',
           icon: const Icon(Icons.delete_outline),
@@ -978,53 +1360,63 @@ class _MetricGrid extends StatelessWidget {
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns = constraints.maxWidth >= 520 ? 3 : 2;
-        return GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          itemCount: items.length,
-          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: columns,
-            mainAxisSpacing: 8,
-            crossAxisSpacing: 8,
-            childAspectRatio: columns == 3 ? 2.8 : 2.2,
-          ),
-          itemBuilder: (context, index) {
-            final item = items[index];
-            return DecoratedBox(
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(8),
+        const spacing = 8.0;
+        final tileWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: tileWidth,
+                child: _MetricTile(item: item),
               ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      item.label,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      item.value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
+          ],
         );
       },
+    );
+  }
+}
+
+class _MetricTile extends StatelessWidget {
+  const _MetricTile({required this.item});
+
+  final _MetricItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              item.label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              item.value,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+            ),
+          ],
+        ),
+      ),
     );
   }
 }
@@ -1049,30 +1441,41 @@ class _StatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        color: colorScheme.surface,
+        border: Border.all(color: colorScheme.outlineVariant),
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Row(
+        padding: const EdgeInsets.all(20),
+        child: Column(
           children: [
-            Icon(icon, color: Theme.of(context).colorScheme.primary),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(title, style: Theme.of(context).textTheme.titleSmall),
-                  const SizedBox(height: 4),
-                  Text(
-                    message,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ],
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: colorScheme.primaryContainer,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Icon(icon, color: colorScheme.onPrimaryContainer),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Text(
+              title,
+              textAlign: TextAlign.center,
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
+            ),
+            const SizedBox(height: 6),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                color: colorScheme.onSurfaceVariant,
               ),
             ),
           ],
@@ -1142,4 +1545,12 @@ String _formatSignedPercent(double value) {
 
 String _formatNumber(double value, int fractionDigits) {
   return value.toStringAsFixed(fractionDigits);
+}
+
+String _formatEditableNumber(double value) {
+  return value.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
+}
+
+Color _returnColor(double value) {
+  return value >= 0 ? Colors.red.shade700 : Colors.green.shade700;
 }

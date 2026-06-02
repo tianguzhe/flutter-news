@@ -48,16 +48,18 @@ void main() {
 
       expect(find.text('支付宝'), findsOneWidget);
       expect(find.text('2 笔'), findsOneWidget);
+      expect(find.text('组合概览'), findsOneWidget);
       expect(find.text('易方达裕丰回报债券A (000171)'), findsNWidgets(2));
       expect(find.textContaining('买入日'), findsNWidgets(2));
-      expect(find.text('+100.00'), findsOneWidget);
+      expect(find.text('+100.00'), findsAtLeastNWidgets(1));
       expect(find.text('+25.00'), findsOneWidget);
-      expect(find.text('总收益 +5.00%'), findsOneWidget);
-      expect(find.text('总收益 +2.44%'), findsOneWidget);
+      expect(find.text('总收益'), findsAtLeastNWidgets(1));
+      expect(find.text('+5.00%'), findsOneWidget);
+      expect(find.text('+2.44%'), findsOneWidget);
       expect(find.text('2.1000'), findsNWidgets(2));
       expect(find.text('2100.00'), findsOneWidget);
       expect(find.text('渠道收益'), findsOneWidget);
-      expect(find.textContaining('+125.00'), findsOneWidget);
+      expect(find.textContaining('+125.00'), findsAtLeastNWidgets(1));
       expect(await holdingRepository.listActiveHoldings(), hasLength(2));
     },
   );
@@ -93,8 +95,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('天天基金'), findsOneWidget);
+    expect(find.text('组合概览'), findsOneWidget);
     expect(find.text('易方达裕丰回报债券A (000171)'), findsOneWidget);
-    expect(find.text('+100.00'), findsOneWidget);
+    expect(find.text('+100.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171']);
   });
 
@@ -135,6 +138,100 @@ void main() {
     expect(find.text('银行'), findsNothing);
     expect(await holdingRepository.listActiveHoldings(), isEmpty);
     expect(holdingRepository.deletedIds, [1]);
+  });
+
+  testWidgets('edits a persisted holding and refreshes its estimate', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1000));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    final holdingRepository = _FakeFundHoldingRepository(
+      initialHoldings: [
+        FundHoldingInput(
+          id: 1,
+          code: '000171',
+          purchaseDate: DateTime(2026, 1, 1),
+          shares: 1000,
+          channel: '银行',
+          purchaseNav: 2,
+        ),
+      ],
+    );
+    final estimateRepository = _FakeFundEstimateRepository();
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fundEstimateRepositoryProvider.overrideWithValue(estimateRepository),
+          fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+        ],
+        child: const MaterialApp(home: FundHoldingEstimatePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('编辑持仓'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('编辑持仓'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '000171'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '1000'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '银行'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '2'), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextFormField, '份额'), '1500');
+    await tester.enterText(find.widgetWithText(TextFormField, '渠道'), '天天基金');
+    await tester.enterText(find.widgetWithText(TextFormField, '购买时净值'), '1.5');
+    await tester.tap(find.text('保存并计算'));
+    await tester.pump();
+    await tester.pumpAndSettle();
+
+    final holdings = await holdingRepository.listActiveHoldings();
+    expect(holdings, hasLength(1));
+    expect(holdings.single.id, 1);
+    expect(holdings.single.shares, 1500);
+    expect(holdings.single.channel, '天天基金');
+    expect(holdings.single.purchaseNav, 1.5);
+    expect(find.text('银行'), findsNothing);
+    expect(find.text('天天基金'), findsOneWidget);
+    expect(find.text('+900.00'), findsAtLeastNWidgets(1));
+    expect(estimateRepository.requestedCodes, ['000171', '000171']);
+  });
+
+  testWidgets('renders metrics without flex overflow on a narrow viewport', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(390, 900));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    final holdingRepository = _FakeFundHoldingRepository(
+      initialHoldings: [
+        FundHoldingInput(
+          id: 1,
+          code: '000171',
+          purchaseDate: DateTime(2026, 1, 1),
+          shares: 1000,
+          channel: '银行',
+          purchaseNav: 2,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fundEstimateRepositoryProvider.overrideWithValue(
+            _FakeFundEstimateRepository(),
+          ),
+          fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+        ],
+        child: const MaterialApp(home: FundHoldingEstimatePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(tester.takeException(), isNull);
+    expect(find.text('组合概览'), findsOneWidget);
+    expect(find.text('今日估算净值'), findsOneWidget);
   });
 }
 
@@ -217,6 +314,27 @@ final class _FakeFundHoldingRepository implements FundHoldingRepository {
       purchaseNav: draft.purchaseNav,
     );
     _holdings.add(holding);
+    return holding;
+  }
+
+  @override
+  Future<FundHoldingInput> updateHolding({
+    required int id,
+    required FundHoldingDraft draft,
+  }) async {
+    final index = _holdings.indexWhere((holding) => holding.id == id);
+    if (index == -1) {
+      throw StateError('Holding $id not found');
+    }
+    final holding = FundHoldingInput(
+      id: id,
+      code: draft.code,
+      purchaseDate: draft.purchaseDate,
+      shares: draft.shares,
+      channel: draft.channel,
+      purchaseNav: draft.purchaseNav,
+    );
+    _holdings[index] = holding;
     return holding;
   }
 

@@ -8,6 +8,11 @@ abstract interface class FundHoldingRepository {
 
   Future<FundHoldingInput> insertHolding(FundHoldingDraft draft);
 
+  Future<FundHoldingInput> updateHolding({
+    required int id,
+    required FundHoldingDraft draft,
+  });
+
   Future<void> softDeleteHolding(int id);
 }
 
@@ -49,6 +54,33 @@ final class DriftFundHoldingRepository implements FundHoldingRepository {
     final row = await (_database.select(
       _database.fundHoldings,
     )..where((holding) => holding.id.equals(id))).getSingle();
+    return _toInput(row);
+  }
+
+  @override
+  Future<FundHoldingInput> updateHolding({
+    required int id,
+    required FundHoldingDraft draft,
+  }) async {
+    final now = DateTime.now();
+    await (_database.update(_database.fundHoldings)..where(
+          (holding) => holding.id.equals(id) & holding.deletedAt.isNull(),
+        ))
+        .write(
+          FundHoldingsCompanion(
+            code: Value(draft.code),
+            purchaseDate: Value(draft.purchaseDate),
+            shares: Value(draft.shares),
+            channel: Value(draft.channel),
+            purchaseNav: Value(draft.purchaseNav),
+            updatedAt: Value(now),
+          ),
+        );
+    final row =
+        await (_database.select(_database.fundHoldings)..where(
+              (holding) => holding.id.equals(id) & holding.deletedAt.isNull(),
+            ))
+            .getSingle();
     return _toInput(row);
   }
 
