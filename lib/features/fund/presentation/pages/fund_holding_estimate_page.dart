@@ -6,6 +6,9 @@ import '../../data/repositories/fund_estimate_repository_provider.dart';
 import '../../data/repositories/fund_holding_repository_provider.dart';
 import '../../domain/fund_holding_estimate.dart';
 
+const _cardRadius = 8.0;
+const _quietBorderAlpha = 150;
+
 class FundHoldingEstimatePage extends ConsumerStatefulWidget {
   const FundHoldingEstimatePage({super.key});
 
@@ -32,10 +35,7 @@ class _FundHoldingEstimatePageState
       final holdings = await ref
           .read(fundHoldingRepositoryProvider)
           .listActiveHoldings();
-      if (!mounted) {
-        return;
-      }
-
+      if (!mounted) return;
       setState(() {
         _holdings
           ..clear()
@@ -43,19 +43,14 @@ class _FundHoldingEstimatePageState
         _holdingStates
           ..clear()
           ..addEntries(
-            holdings.map(
-              (holding) => MapEntry(holding.id, const AsyncLoading()),
-            ),
+            holdings.map((h) => MapEntry(h.id, const AsyncLoading())),
           );
         _loadHoldingsError = null;
         _isLoadingHoldings = false;
       });
-
       await Future.wait(holdings.map(_refreshHolding));
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
         _loadHoldingsError = error;
         _isLoadingHoldings = false;
@@ -67,10 +62,7 @@ class _FundHoldingEstimatePageState
     final input = await Navigator.of(context).push<FundHoldingInput>(
       MaterialPageRoute(builder: (_) => const FundHoldingEntryPage()),
     );
-    if (input == null || !mounted) {
-      return;
-    }
-
+    if (input == null || !mounted) return;
     setState(() {
       _holdings.add(input);
       _holdingStates[input.id] = const AsyncLoading();
@@ -84,10 +76,7 @@ class _FundHoldingEstimatePageState
         builder: (_) => FundHoldingEntryPage(initialHolding: holding),
       ),
     );
-    if (updated == null || !mounted) {
-      return;
-    }
-
+    if (updated == null || !mounted) return;
     setState(() {
       final index = _holdings.indexWhere((item) => item.id == updated.id);
       if (index == -1) {
@@ -111,11 +100,9 @@ class _FundHoldingEstimatePageState
         realtimeEstimate: realtimeEstimate,
       );
     });
-    if (!mounted) {
-      return;
-    }
+    if (!mounted) return;
     setState(() {
-      if (_holdings.any((holding) => holding.id == input.id)) {
+      if (_holdings.any((h) => h.id == input.id)) {
         _holdingStates[input.id] = result;
       }
     });
@@ -124,17 +111,13 @@ class _FundHoldingEstimatePageState
   Future<void> _removeHolding(FundHoldingInput input) async {
     try {
       await ref.read(fundHoldingRepositoryProvider).softDeleteHolding(input.id);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() {
-        _holdings.removeWhere((holding) => holding.id == input.id);
+        _holdings.removeWhere((h) => h.id == input.id);
         _holdingStates.remove(input.id);
       });
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       ScaffoldMessenger.of(
         context,
       ).showSnackBar(SnackBar(content: Text('删除持仓失败：$error')));
@@ -144,30 +127,34 @@ class _FundHoldingEstimatePageState
   @override
   Widget build(BuildContext context) {
     final estimates = _holdings
-        .map((holding) => _holdingStates[holding.id])
+        .map((h) => _holdingStates[h.id])
         .whereType<AsyncData<FundHoldingEstimate>>()
-        .map((state) => state.value)
+        .map((s) => s.value)
         .toList();
 
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
+      backgroundColor: cs.surfaceContainerLowest,
       appBar: AppBar(
         title: const Text('基金收益估算'),
         centerTitle: false,
-        actions: [
-          IconButton(
-            tooltip: '新增持仓',
-            onPressed: _openAddHoldingPage,
-            icon: const Icon(Icons.add),
-          ),
-        ],
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        tooltip: '新增持仓',
+        onPressed: _openAddHoldingPage,
+        icon: const Icon(Icons.add),
+        label: const Text('新增持仓'),
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          padding: const EdgeInsets.fromLTRB(16, 4, 16, 100),
           children: [
             if (_holdings.isNotEmpty) ...[
               _PortfolioOverview(holdings: _holdings, estimates: estimates),
-              const SizedBox(height: 18),
+              const SizedBox(height: 16),
             ],
             _HoldingsByChannelSection(
               holdings: _holdings,
@@ -193,43 +180,44 @@ class _PortfolioOverview extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    final channels = holdings.map((holding) => holding.channel).toSet().length;
-    final totalCost = estimates.fold<double>(0, (sum, item) => sum + item.cost);
+    final cs = Theme.of(context).colorScheme;
+    final channels = holdings.map((h) => h.channel).toSet().length;
+    final totalCost = estimates.fold<double>(0, (s, e) => s + e.cost);
     final totalValue = estimates.fold<double>(
       0,
-      (sum, item) => sum + item.estimatedValue,
+      (s, e) => s + e.estimatedValue,
     );
     final totalReturn = totalValue - totalCost;
+    final totalRate = totalCost == 0 ? 0.0 : totalReturn / totalCost;
     final hasEstimate = estimates.isNotEmpty;
+    final returnColor = hasEstimate ? _returnColor(totalReturn) : cs.primary;
+    final todayFloat = hasEstimate
+        ? estimates.fold<double>(
+            0,
+            (s, e) =>
+                s +
+                (e.realtimeEstimate.estNav - e.realtimeEstimate.prevNav) *
+                    e.input.shares,
+          )
+        : 0.0;
 
-    return DecoratedBox(
+    return Container(
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surface,
+        border: Border.all(
+          color: cs.outlineVariant.withAlpha(_quietBorderAlpha),
+        ),
+        borderRadius: BorderRadius.circular(_cardRadius),
       ),
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colorScheme.primaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.all(8),
-                    child: Icon(
-                      Icons.pie_chart,
-                      size: 20,
-                      color: colorScheme.onPrimaryContainer,
-                    ),
-                  ),
-                ),
+                _IconBadge(icon: Icons.pie_chart_outline, color: cs.primary),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -244,32 +232,41 @@ class _PortfolioOverview extends StatelessWidget {
                       Text(
                         '${holdings.length} 笔持仓 · $channels 个渠道',
                         style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: colorScheme.onSurfaceVariant,
+                          color: cs.onSurfaceVariant,
                         ),
                       ),
                     ],
                   ),
                 ),
+                if (hasEstimate)
+                  _TrendPill(
+                    label: _formatPercent(totalRate),
+                    color: returnColor,
+                  ),
               ],
             ),
-            const SizedBox(height: 14),
-            _OverviewMetricGrid(
+            const SizedBox(height: 16),
+            _AmountPanel(
+              label: hasEstimate ? '持仓总收益' : '正在拉取盘中估值',
+              value: hasEstimate ? _formatSignedMoney(totalReturn) : '估算中...',
+              color: returnColor,
+              trailing: hasEstimate
+                  ? _formatSignedMoney(todayFloat)
+                  : '${holdings.length} 笔',
+              trailingLabel: hasEstimate ? '今日浮动' : '持仓数量',
+            ),
+            const SizedBox(height: 12),
+            _SummaryMetricGrid(
               items: [
-                _OverviewMetricItem(
-                  label: '估算总市值',
-                  value: hasEstimate ? _formatMoney(totalValue) : '计算中',
+                _MetricItem(
+                  '估算总市值',
+                  hasEstimate ? _formatMoney(totalValue) : '--',
                 ),
-                _OverviewMetricItem(
-                  label: '持仓成本',
-                  value: hasEstimate ? _formatMoney(totalCost) : '计算中',
+                _MetricItem(
+                  '持仓成本',
+                  hasEstimate ? _formatMoney(totalCost) : '--',
                 ),
-                _OverviewMetricItem(
-                  label: '总收益',
-                  value: hasEstimate ? _formatSignedMoney(totalReturn) : '计算中',
-                  valueColor: hasEstimate
-                      ? _returnColor(totalReturn)
-                      : colorScheme.onSurface,
-                ),
+                _MetricItem('持仓渠道', '$channels 个'),
               ],
             ),
           ],
@@ -279,20 +276,149 @@ class _PortfolioOverview extends StatelessWidget {
   }
 }
 
-class _OverviewMetricGrid extends StatelessWidget {
-  const _OverviewMetricGrid({required this.items});
+class _AmountPanel extends StatelessWidget {
+  const _AmountPanel({
+    required this.label,
+    required this.value,
+    required this.color,
+    required this.trailing,
+    required this.trailingLabel,
+  });
 
-  final List<_OverviewMetricItem> items;
+  final String label;
+  final String value;
+  final Color color;
+  final String trailing;
+  final String trailingLabel;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: color.withAlpha(16),
+        border: Border.all(color: color.withAlpha(55)),
+        borderRadius: BorderRadius.circular(_cardRadius),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelMedium?.copyWith(color: cs.onSurfaceVariant),
+                ),
+                const SizedBox(height: 6),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    value,
+                    maxLines: 1,
+                    style: Theme.of(context).textTheme.headlineMedium?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                trailingLabel,
+                style: Theme.of(
+                  context,
+                ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                trailing,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: color,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _IconBadge extends StatelessWidget {
+  const _IconBadge({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 34,
+      height: 34,
+      decoration: BoxDecoration(
+        color: color.withAlpha(24),
+        borderRadius: BorderRadius.circular(_cardRadius),
+      ),
+      child: Icon(icon, size: 19, color: color),
+    );
+  }
+}
+
+class _TrendPill extends StatelessWidget {
+  const _TrendPill({required this.label, required this.color});
+
+  final String label;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        border: Border.all(color: color.withAlpha(70)),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: color,
+          fontWeight: FontWeight.w800,
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryMetricGrid extends StatelessWidget {
+  const _SummaryMetricGrid({required this.items});
+
+  final List<_MetricItem> items;
 
   @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (context, constraints) {
-        final columns = constraints.maxWidth >= 560 ? 3 : 1;
+        final columns = constraints.maxWidth >= 520 ? 3 : 1;
         const spacing = 8.0;
         final tileWidth =
             (constraints.maxWidth - spacing * (columns - 1)) / columns;
-
         return Wrap(
           spacing: spacing,
           runSpacing: spacing,
@@ -300,7 +426,7 @@ class _OverviewMetricGrid extends StatelessWidget {
             for (final item in items)
               SizedBox(
                 width: tileWidth,
-                child: _OverviewMetricTile(item: item),
+                child: _SummaryMetricTile(item: item),
               ),
           ],
         );
@@ -309,61 +435,45 @@ class _OverviewMetricGrid extends StatelessWidget {
   }
 }
 
-class _OverviewMetricTile extends StatelessWidget {
-  const _OverviewMetricTile({required this.item});
+class _SummaryMetricTile extends StatelessWidget {
+  const _SummaryMetricTile({required this.item});
 
-  final _OverviewMetricItem item;
+  final _MetricItem item;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surfaceContainerHighest.withAlpha(150),
+        borderRadius: BorderRadius.circular(_cardRadius),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Text(
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(
               item.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: colorScheme.onSurfaceVariant,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(color: cs.onSurfaceVariant),
             ),
-            const SizedBox(height: 5),
-            Text(
-              item.value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: item.valueColor,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 8),
+          Text(
+            item.value,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w800),
+          ),
+        ],
       ),
     );
   }
-}
-
-class _OverviewMetricItem {
-  const _OverviewMetricItem({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
-
-  final String label;
-  final String value;
-  final Color? valueColor;
 }
 
 class FundHoldingEntryPage extends ConsumerStatefulWidget {
@@ -392,9 +502,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
   void initState() {
     super.initState();
     final holding = widget.initialHolding;
-    if (holding == null) {
-      return;
-    }
+    if (holding == null) return;
     _codeController.text = holding.code;
     _sharesController.text = _formatEditableNumber(holding.shares);
     _channelController.text = holding.channel;
@@ -419,16 +527,12 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
       firstDate: DateTime(1990),
       lastDate: now,
     );
-    if (picked == null) {
-      return;
-    }
+    if (picked == null) return;
     setState(() => _purchaseDate = picked);
   }
 
   Future<void> _submit() async {
-    if (!_formKey.currentState!.validate()) {
-      return;
-    }
+    if (!_formKey.currentState!.validate()) return;
     if (_purchaseDate == null) {
       ScaffoldMessenger.of(
         context,
@@ -453,14 +557,10 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
               draft: draft,
             )
           : await repository.insertHolding(draft);
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       Navigator.of(context).pop(input);
     } catch (error) {
-      if (!mounted) {
-        return;
-      }
+      if (!mounted) return;
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(
         context,
@@ -470,16 +570,21 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Scaffold(
+      backgroundColor: cs.surfaceContainerLowest,
       appBar: AppBar(
         title: Text(_isEditing ? '编辑持仓' : '新增持仓'),
         centerTitle: false,
+        elevation: 0,
+        backgroundColor: Colors.transparent,
+        surfaceTintColor: Colors.transparent,
       ),
       body: SafeArea(
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          padding: const EdgeInsets.fromLTRB(16, 8, 16, 32),
           children: [
-            _InputSection(
+            _EntryFormCard(
               formKey: _formKey,
               codeController: _codeController,
               sharesController: _sharesController,
@@ -498,8 +603,8 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
   }
 }
 
-class _InputSection extends StatelessWidget {
-  const _InputSection({
+class _EntryFormCard extends StatelessWidget {
+  const _EntryFormCard({
     required this.formKey,
     required this.codeController,
     required this.sharesController,
@@ -525,138 +630,229 @@ class _InputSection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
+    final cs = Theme.of(context).colorScheme;
+    return Container(
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surface,
+        border: Border.all(
+          color: cs.outlineVariant.withAlpha(_quietBorderAlpha),
+        ),
+        borderRadius: BorderRadius.circular(_cardRadius),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Form(
-          key: formKey,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _IconBadge(
+                  icon: isEditing ? Icons.edit_note : Icons.add_chart,
+                  color: cs.primary,
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        isEditing ? '编辑持仓信息' : '新增持仓信息',
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '按实际购买记录填写，保存后自动估算收益',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Divider(height: 1, color: cs.outlineVariant.withAlpha(120)),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 16),
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  DecoratedBox(
-                    decoration: BoxDecoration(
-                      color: colorScheme.primaryContainer,
-                      borderRadius: BorderRadius.circular(8),
+                  TextFormField(
+                    controller: codeController,
+                    decoration: InputDecoration(
+                      labelText: '基金代码',
+                      hintText: '例如 000171',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.tag, color: cs.primary, size: 20),
                     ),
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Icon(
-                        Icons.edit_note,
-                        size: 20,
-                        color: colorScheme.onPrimaryContainer,
+                    keyboardType: TextInputType.number,
+                    maxLength: 6,
+                    inputFormatters: [
+                      FilteringTextInputFormatter.digitsOnly,
+                      LengthLimitingTextInputFormatter(6),
+                    ],
+                    validator: _validateFundCode,
+                  ),
+                  const SizedBox(height: 12),
+                  InkWell(
+                    onTap: onPickPurchaseDate,
+                    borderRadius: BorderRadius.circular(_cardRadius),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 15,
+                      ),
+                      decoration: BoxDecoration(
+                        border: Border.all(
+                          color: purchaseDate != null ? cs.primary : cs.outline,
+                          width: purchaseDate != null ? 2 : 1,
+                        ),
+                        borderRadius: BorderRadius.circular(_cardRadius),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.calendar_month,
+                            size: 20,
+                            color: purchaseDate != null
+                                ? cs.primary
+                                : cs.onSurfaceVariant,
+                          ),
+                          const SizedBox(width: 12),
+                          Expanded(
+                            child: Text(
+                              purchaseDate == null
+                                  ? '选择购买时间'
+                                  : _formatDate(purchaseDate!),
+                              style: Theme.of(context).textTheme.bodyLarge
+                                  ?.copyWith(
+                                    color: purchaseDate != null
+                                        ? cs.onSurface
+                                        : cs.onSurfaceVariant,
+                                  ),
+                            ),
+                          ),
+                          if (purchaseDate != null)
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: cs.primaryContainer,
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Text(
+                                '已选',
+                                style: Theme.of(context).textTheme.labelSmall
+                                    ?.copyWith(
+                                      color: cs.onPrimaryContainer,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                              ),
+                            )
+                          else
+                            Icon(
+                              Icons.chevron_right,
+                              size: 18,
+                              color: cs.onSurfaceVariant,
+                            ),
+                        ],
                       ),
                     ),
                   ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '持仓信息',
-                          style: Theme.of(context).textTheme.titleMedium
-                              ?.copyWith(fontWeight: FontWeight.w800),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '按实际购买记录填写，保存后自动估算收益',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                      ],
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: sharesController,
+                    decoration: InputDecoration(
+                      labelText: '份额',
+                      hintText: '例如 1000.00',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: Icon(
+                        Icons.stacked_bar_chart,
+                        color: cs.primary,
+                        size: 20,
+                      ),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [_DecimalTextInputFormatter()],
+                    validator: (v) => _validatePositiveNumber(v, '请输入份额'),
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: channelController,
+                    decoration: InputDecoration(
+                      labelText: '渠道',
+                      hintText: '例如 支付宝 / 天天基金 / 银行',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: Icon(
+                        Icons.account_balance,
+                        color: cs.primary,
+                        size: 20,
+                      ),
+                    ),
+                    validator: (v) =>
+                        v == null || v.trim().isEmpty ? '请输入渠道' : null,
+                  ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: purchaseNavController,
+                    decoration: InputDecoration(
+                      labelText: '购买时净值',
+                      hintText: '例如 2.0820',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: Icon(
+                        Icons.price_change,
+                        color: cs.primary,
+                        size: 20,
+                      ),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [_DecimalTextInputFormatter()],
+                    validator: (v) => _validatePositiveNumber(v, '请输入购买时净值'),
+                  ),
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    onPressed: isSaving ? null : onSubmit,
+                    style: FilledButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(_cardRadius),
+                      ),
+                    ),
+                    icon: isSaving
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Icon(
+                            isEditing
+                                ? Icons.save_outlined
+                                : Icons.add_circle_outline,
+                          ),
+                    label: Text(
+                      isEditing ? '保存并计算' : '添加并计算',
+                      style: const TextStyle(fontWeight: FontWeight.w700),
                     ),
                   ),
                 ],
               ),
-              const SizedBox(height: 16),
-              TextFormField(
-                controller: codeController,
-                decoration: const InputDecoration(
-                  labelText: '基金代码',
-                  hintText: '例如 000171',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: TextInputType.number,
-                maxLength: 6,
-                inputFormatters: [
-                  FilteringTextInputFormatter.digitsOnly,
-                  LengthLimitingTextInputFormatter(6),
-                ],
-                validator: _validateFundCode,
-              ),
-              const SizedBox(height: 12),
-              OutlinedButton.icon(
-                onPressed: onPickPurchaseDate,
-                icon: const Icon(Icons.calendar_month),
-                label: Text(
-                  purchaseDate == null
-                      ? '选择购买时间'
-                      : '购买时间 ${_formatDate(purchaseDate!)}',
-                ),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: sharesController,
-                decoration: const InputDecoration(
-                  labelText: '份额',
-                  hintText: '例如 1000.00',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [_DecimalTextInputFormatter()],
-                validator: (value) => _validatePositiveNumber(value, '请输入份额'),
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: channelController,
-                decoration: const InputDecoration(
-                  labelText: '渠道',
-                  hintText: '例如 支付宝 / 天天基金 / 银行',
-                  border: OutlineInputBorder(),
-                ),
-                validator: (value) =>
-                    value == null || value.trim().isEmpty ? '请输入渠道' : null,
-              ),
-              const SizedBox(height: 12),
-              TextFormField(
-                controller: purchaseNavController,
-                decoration: const InputDecoration(
-                  labelText: '购买时净值',
-                  hintText: '例如 2.0820',
-                  border: OutlineInputBorder(),
-                ),
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
-                ),
-                inputFormatters: [_DecimalTextInputFormatter()],
-                validator: (value) =>
-                    _validatePositiveNumber(value, '请输入购买时净值'),
-              ),
-              const SizedBox(height: 16),
-              FilledButton.icon(
-                onPressed: isSaving ? null : onSubmit,
-                icon: isSaving
-                    ? const SizedBox(
-                        width: 16,
-                        height: 16,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(isEditing ? Icons.save_outlined : Icons.add),
-                label: Text(isEditing ? '保存并计算' : '添加并计算'),
-              ),
-            ],
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -690,7 +886,6 @@ class _HoldingsByChannelSection extends StatelessWidget {
         message: '正在从本地数据库加载持仓记录。',
       );
     }
-
     if (loadError != null && holdings.isEmpty) {
       return _StatePanel(
         icon: Icons.error_outline,
@@ -698,18 +893,17 @@ class _HoldingsByChannelSection extends StatelessWidget {
         message: loadError.toString(),
       );
     }
-
     if (holdings.isEmpty) {
       return const _StatePanel(
         icon: Icons.insights,
         title: '按渠道展示持仓',
-        message: '添加后会按渠道分组；同一基金不同购买时间会分别计算。',
+        message: '点击右下角按钮添加持仓，系统会按渠道分组显示收益。',
       );
     }
 
     final grouped = <String, List<FundHoldingInput>>{};
-    for (final holding in holdings) {
-      grouped.putIfAbsent(holding.channel, () => []).add(holding);
+    for (final h in holdings) {
+      grouped.putIfAbsent(h.channel, () => []).add(h);
     }
 
     return Column(
@@ -752,176 +946,132 @@ class _ChannelGroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final estimates = holdings
-        .map((holding) => states[holding.id])
+        .map((h) => states[h.id])
         .whereType<AsyncData<FundHoldingEstimate>>()
-        .map((state) => state.value)
+        .map((s) => s.value)
         .toList();
-    final totalCost = estimates.fold<double>(0, (sum, item) => sum + item.cost);
+    final totalCost = estimates.fold<double>(0, (s, e) => s + e.cost);
     final totalValue = estimates.fold<double>(
       0,
-      (sum, item) => sum + item.estimatedValue,
+      (s, e) => s + e.estimatedValue,
     );
     final totalReturn = totalValue - totalCost;
     final totalRate = totalCost == 0 ? 0.0 : totalReturn / totalCost;
+    final hasEstimate = estimates.isNotEmpty;
+    final returnColor = hasEstimate ? _returnColor(totalReturn) : cs.primary;
 
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
+    return Container(
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surface,
+        border: Border.all(
+          color: cs.outlineVariant.withAlpha(_quietBorderAlpha),
+        ),
+        borderRadius: BorderRadius.circular(_cardRadius),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Icon(Icons.account_balance_wallet, color: colorScheme.primary),
-                const SizedBox(width: 8),
+                _IconBadge(
+                  icon: Icons.account_balance_wallet_outlined,
+                  color: cs.primary,
+                ),
+                const SizedBox(width: 10),
                 Expanded(
-                  child: Text(
-                    channel,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                ),
-                DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: colorScheme.secondaryContainer,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
-                    ),
-                    child: Text(
-                      '${holdings.length} 笔',
-                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                        color: colorScheme.onSecondaryContainer,
-                        fontWeight: FontWeight.w700,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        channel,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.titleMedium
+                            ?.copyWith(fontWeight: FontWeight.w800),
                       ),
-                    ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '${holdings.length} 笔',
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
+                      ),
+                    ],
                   ),
                 ),
+                if (hasEstimate)
+                  _TrendPill(
+                    label: _formatPercent(totalRate),
+                    color: returnColor,
+                  )
+                else
+                  _CountPill(label: '${holdings.length} 笔'),
               ],
             ),
-            if (estimates.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              _ChannelSummary(
-                totalCost: totalCost,
-                totalValue: totalValue,
-                totalReturn: totalReturn,
-                totalRate: totalRate,
+          ),
+          if (hasEstimate) ...[
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+              child: _SummaryMetricGrid(
+                items: [
+                  _MetricItem('总市值', _formatMoney(totalValue)),
+                  _MetricItem('持仓成本', _formatMoney(totalCost)),
+                  _MetricItem('渠道收益', _formatSignedMoney(totalReturn)),
+                ],
               ),
-            ],
-            const SizedBox(height: 12),
-            for (final holding in holdings) ...[
-              _HoldingCard(
-                holding: holding,
-                state: states[holding.id] ?? const AsyncLoading(),
-                onRefresh: () => onRefresh(holding),
-                onEdit: () => onEdit(holding),
-                onRemove: () => onRemove(holding),
-              ),
-              if (holding != holdings.last) const SizedBox(height: 10),
-            ],
+            ),
           ],
-        ),
+          Container(height: 1, color: cs.outlineVariant.withAlpha(120)),
+          Padding(
+            padding: const EdgeInsets.all(10),
+            child: Column(
+              children: [
+                for (int i = 0; i < holdings.length; i++) ...[
+                  _HoldingCard(
+                    holding: holdings[i],
+                    state: states[holdings[i].id] ?? const AsyncLoading(),
+                    onRefresh: () => onRefresh(holdings[i]),
+                    onEdit: () => onEdit(holdings[i]),
+                    onRemove: () => onRemove(holdings[i]),
+                  ),
+                  if (i < holdings.length - 1) const SizedBox(height: 10),
+                ],
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _ChannelSummary extends StatelessWidget {
-  const _ChannelSummary({
-    required this.totalCost,
-    required this.totalValue,
-    required this.totalReturn,
-    required this.totalRate,
-  });
-
-  final double totalCost;
-  final double totalValue;
-  final double totalReturn;
-  final double totalRate;
-
-  @override
-  Widget build(BuildContext context) {
-    final color = _returnColor(totalReturn);
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Row(
-          children: [
-            Expanded(
-              child: _SummaryText(
-                label: '渠道总市值',
-                value: _formatMoney(totalValue),
-              ),
-            ),
-            Expanded(
-              child: _SummaryText(
-                label: '渠道成本',
-                value: _formatMoney(totalCost),
-              ),
-            ),
-            Expanded(
-              child: _SummaryText(
-                label: '渠道收益',
-                value:
-                    '${_formatSignedMoney(totalReturn)} / ${_formatPercent(totalRate)}',
-                valueColor: color,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SummaryText extends StatelessWidget {
-  const _SummaryText({
-    required this.label,
-    required this.value,
-    this.valueColor,
-  });
+class _CountPill extends StatelessWidget {
+  const _CountPill({required this.label});
 
   final String label;
-  final String value;
-  final Color? valueColor;
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          label,
-          style: Theme.of(context).textTheme.labelMedium?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        label,
+        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+          color: cs.onSurfaceVariant,
+          fontWeight: FontWeight.w700,
         ),
-        const SizedBox(height: 4),
-        Text(
-          value,
-          maxLines: 2,
-          overflow: TextOverflow.ellipsis,
-          style: Theme.of(context).textTheme.titleSmall?.copyWith(
-            color: valueColor,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
-      ],
+      ),
     );
   }
 }
@@ -943,31 +1093,49 @@ class _HoldingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
+    final cs = Theme.of(context).colorScheme;
+    final accentColor = state.when(
+      loading: () => cs.outline,
+      error: (_, _) => cs.error,
+      data: (e) => _returnColor(e.totalReturn),
+    );
+
+    return Container(
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerLowest,
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surfaceContainerLowest,
+        border: Border.all(color: cs.outlineVariant.withAlpha(115)),
+        borderRadius: BorderRadius.circular(_cardRadius),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: state.when(
-          loading: () => _HoldingLoading(holding: holding),
-          error: (error, _) => _HoldingError(
-            holding: holding,
-            message: error.toString(),
-            onRefresh: onRefresh,
-            onEdit: onEdit,
-            onRemove: onRemove,
+      clipBehavior: Clip.antiAlias,
+      child: Stack(
+        children: [
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 3,
+            child: ColoredBox(color: accentColor),
           ),
-          data: (estimate) => _HoldingEstimateResult(
-            estimate: estimate,
-            onRefresh: onRefresh,
-            onEdit: onEdit,
-            onRemove: onRemove,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 12, 12, 12),
+            child: state.when(
+              loading: () => _HoldingLoading(holding: holding),
+              error: (error, _) => _HoldingError(
+                holding: holding,
+                message: error.toString(),
+                onRefresh: onRefresh,
+                onEdit: onEdit,
+                onRemove: onRemove,
+              ),
+              data: (estimate) => _HoldingEstimateResult(
+                estimate: estimate,
+                onRefresh: onRefresh,
+                onEdit: onEdit,
+                onRemove: onRemove,
+              ),
+            ),
           ),
-        ),
+        ],
       ),
     );
   }
@@ -997,6 +1165,7 @@ class _HoldingEstimateResult extends StatelessWidget {
         _HoldingHeader(
           title: '${realtime.name} (${realtime.code})',
           subtitle: '买入日 ${_formatDate(estimate.input.purchaseDate)}',
+          changePct: realtime.estChangePct,
           onRefresh: onRefresh,
           onEdit: onEdit,
           onRemove: onRemove,
@@ -1052,16 +1221,17 @@ class _ReturnBanner extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
+    final cs = Theme.of(context).colorScheme;
+    return Container(
       decoration: BoxDecoration(
-        color: color.withAlpha(20),
-        border: Border.all(color: color.withAlpha(72)),
-        borderRadius: BorderRadius.circular(8),
+        color: color.withAlpha(14),
+        borderRadius: BorderRadius.circular(_cardRadius),
+        border: Border.all(color: color.withAlpha(55)),
       ),
       child: Padding(
         padding: const EdgeInsets.all(12),
         child: Row(
+          crossAxisAlignment: CrossAxisAlignment.end,
           children: [
             Expanded(
               child: Column(
@@ -1070,42 +1240,25 @@ class _ReturnBanner extends StatelessWidget {
                   Text(
                     '总收益',
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
+                      color: cs.onSurfaceVariant,
                     ),
                   ),
-                  const SizedBox(height: 3),
-                  Text(
-                    _formatSignedMoney(totalReturn),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                      color: color,
-                      fontWeight: FontWeight.w800,
+                  const SizedBox(height: 5),
+                  FittedBox(
+                    fit: BoxFit.scaleDown,
+                    alignment: Alignment.centerLeft,
+                    child: Text(
+                      _formatSignedMoney(totalReturn),
+                      maxLines: 1,
+                      style: Theme.of(context).textTheme.headlineSmall
+                          ?.copyWith(color: color, fontWeight: FontWeight.w800),
                     ),
                   ),
                 ],
               ),
             ),
-            const SizedBox(width: 10),
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: color.withAlpha(28),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 7,
-                ),
-                child: Text(
-                  _formatPercent(totalReturnRate),
-                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    color: color,
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ),
+            const SizedBox(width: 12),
+            _TrendPill(label: _formatPercent(totalReturnRate), color: color),
           ],
         ),
       ),
@@ -1115,7 +1268,6 @@ class _ReturnBanner extends StatelessWidget {
 
 class _EstimateMetaRow extends StatelessWidget {
   const _EstimateMetaRow({required this.items});
-
   final List<_EstimateMetaItem> items;
 
   @override
@@ -1131,19 +1283,18 @@ class _EstimateMetaRow extends StatelessWidget {
           return Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              for (final child in children) ...[
-                child,
-                if (child != children.last) const SizedBox(height: 8),
+              for (int i = 0; i < children.length; i++) ...[
+                children[i],
+                if (i < children.length - 1) const SizedBox(height: 8),
               ],
             ],
           );
         }
-
         return Row(
           children: [
-            for (final child in children) ...[
-              Expanded(child: child),
-              if (child != children.last) const SizedBox(width: 8),
+            for (int i = 0; i < children.length; i++) ...[
+              Expanded(child: children[i]),
+              if (i < children.length - 1) const SizedBox(width: 8),
             ],
           ],
         );
@@ -1154,23 +1305,22 @@ class _EstimateMetaRow extends StatelessWidget {
 
 class _EstimateMetaTile extends StatelessWidget {
   const _EstimateMetaTile({required this.item});
-
   final _EstimateMetaItem item;
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
+    final cs = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: colorScheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surfaceContainerHighest.withAlpha(150),
+        borderRadius: BorderRadius.circular(_cardRadius),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(10),
+        padding: const EdgeInsets.all(9),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Icon(item.icon, size: 18, color: colorScheme.onSurfaceVariant),
+            Icon(item.icon, size: 18, color: cs.onSurfaceVariant),
             const SizedBox(width: 8),
             Expanded(
               child: Column(
@@ -1181,7 +1331,7 @@ class _EstimateMetaTile extends StatelessWidget {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: colorScheme.onSurfaceVariant,
+                      color: cs.onSurfaceVariant,
                     ),
                   ),
                   const SizedBox(height: 3),
@@ -1200,7 +1350,7 @@ class _EstimateMetaTile extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: colorScheme.onSurfaceVariant,
+                        color: cs.onSurfaceVariant,
                       ),
                     ),
                   ],
@@ -1221,7 +1371,6 @@ class _EstimateMetaItem {
     required this.value,
     this.helper,
   });
-
   final IconData icon;
   final String label;
   final String value;
@@ -1230,22 +1379,37 @@ class _EstimateMetaItem {
 
 class _HoldingLoading extends StatelessWidget {
   const _HoldingLoading({required this.holding});
-
   final FundHoldingInput holding;
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Row(
       children: [
-        const SizedBox(
-          width: 18,
-          height: 18,
-          child: CircularProgressIndicator(strokeWidth: 2),
+        SizedBox(
+          width: 20,
+          height: 20,
+          child: CircularProgressIndicator(strokeWidth: 2.5, color: cs.primary),
         ),
         const SizedBox(width: 12),
         Expanded(
-          child: Text(
-            '${holding.code} · ${_formatDate(holding.purchaseDate)} 正在估算',
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                holding.code,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                '买入日 ${_formatDate(holding.purchaseDate)} · 正在拉取估值',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+              ),
+            ],
           ),
         ),
       ],
@@ -1276,6 +1440,7 @@ class _HoldingError extends StatelessWidget {
         _HoldingHeader(
           title: holding.code,
           subtitle: '买入日 ${_formatDate(holding.purchaseDate)}',
+          changePct: null,
           onRefresh: onRefresh,
           onEdit: onEdit,
           onRemove: onRemove,
@@ -1294,6 +1459,7 @@ class _HoldingHeader extends StatelessWidget {
   const _HoldingHeader({
     required this.title,
     required this.subtitle,
+    required this.changePct,
     required this.onRefresh,
     required this.onEdit,
     required this.onRemove,
@@ -1301,12 +1467,14 @@ class _HoldingHeader extends StatelessWidget {
 
   final String title;
   final String subtitle;
+  final double? changePct;
   final VoidCallback onRefresh;
   final VoidCallback onEdit;
   final VoidCallback onRemove;
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -1316,43 +1484,93 @@ class _HoldingHeader extends StatelessWidget {
             children: [
               Text(
                 title,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
                 style: Theme.of(
                   context,
                 ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
-              const SizedBox(height: 2),
-              Text(
-                subtitle,
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
+              const SizedBox(height: 3),
+              Wrap(
+                spacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [
+                  Text(
+                    subtitle,
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
+                  ),
+                  if (changePct != null)
+                    _TrendPill(
+                      label: '今日 ${_formatSignedPercent(changePct!)}',
+                      color: _returnColor(changePct!),
+                    ),
+                ],
               ),
             ],
           ),
         ),
-        IconButton(
+        const SizedBox(width: 8),
+        _IconActionButton(
           onPressed: onRefresh,
           tooltip: '刷新估值',
           icon: const Icon(Icons.refresh),
         ),
-        IconButton(
+        _IconActionButton(
           onPressed: onEdit,
           tooltip: '编辑持仓',
           icon: const Icon(Icons.edit_outlined),
         ),
-        IconButton(
+        _IconActionButton(
           onPressed: onRemove,
           tooltip: '删除持仓',
           icon: const Icon(Icons.delete_outline),
+          color: cs.error,
         ),
       ],
     );
   }
 }
 
+class _IconActionButton extends StatelessWidget {
+  const _IconActionButton({
+    required this.onPressed,
+    required this.tooltip,
+    required this.icon,
+    this.color,
+  });
+
+  final VoidCallback onPressed;
+  final String tooltip;
+  final Widget icon;
+  final Color? color;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 36,
+      height: 36,
+      child: IconButton(
+        onPressed: onPressed,
+        tooltip: tooltip,
+        icon: icon,
+        color: color,
+        iconSize: 19,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        style: IconButton.styleFrom(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(_cardRadius),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class _MetricGrid extends StatelessWidget {
   const _MetricGrid({required this.items});
-
   final List<_MetricItem> items;
 
   @override
@@ -1363,7 +1581,6 @@ class _MetricGrid extends StatelessWidget {
         const spacing = 8.0;
         final tileWidth =
             (constraints.maxWidth - spacing * (columns - 1)) / columns;
-
         return Wrap(
           spacing: spacing,
           runSpacing: spacing,
@@ -1382,14 +1599,14 @@ class _MetricGrid extends StatelessWidget {
 
 class _MetricTile extends StatelessWidget {
   const _MetricTile({required this.item});
-
   final _MetricItem item;
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     return DecoratedBox(
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        color: cs.surfaceContainerHighest,
         borderRadius: BorderRadius.circular(8),
       ),
       child: Padding(
@@ -1401,9 +1618,9 @@ class _MetricTile extends StatelessWidget {
               item.label,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.labelMedium?.copyWith(color: cs.onSurfaceVariant),
             ),
             const SizedBox(height: 4),
             Text(
@@ -1423,7 +1640,6 @@ class _MetricTile extends StatelessWidget {
 
 class _MetricItem {
   const _MetricItem(this.label, this.value);
-
   final String label;
   final String value;
 }
@@ -1441,28 +1657,21 @@ class _StatePanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colorScheme = Theme.of(context).colorScheme;
-    return DecoratedBox(
+    final cs = Theme.of(context).colorScheme;
+    return Container(
       decoration: BoxDecoration(
-        color: colorScheme.surface,
-        border: Border.all(color: colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surface,
+        borderRadius: BorderRadius.circular(_cardRadius),
+        border: Border.all(
+          color: cs.outlineVariant.withAlpha(_quietBorderAlpha),
+        ),
       ),
       child: Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 36),
         child: Column(
           children: [
-            DecoratedBox(
-              decoration: BoxDecoration(
-                color: colorScheme.primaryContainer,
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Padding(
-                padding: const EdgeInsets.all(10),
-                child: Icon(icon, color: colorScheme.onPrimaryContainer),
-              ),
-            ),
-            const SizedBox(height: 12),
+            _IconBadge(icon: icon, color: cs.primary),
+            const SizedBox(height: 16),
             Text(
               title,
               textAlign: TextAlign.center,
@@ -1470,12 +1679,13 @@ class _StatePanel extends StatelessWidget {
                 context,
               ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Text(
               message,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                color: colorScheme.onSurfaceVariant,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: cs.onSurfaceVariant,
+                height: 1.55,
               ),
             ),
           ],
@@ -1507,13 +1717,9 @@ String? _validateFundCode(String? value) {
 
 String? _validatePositiveNumber(String? value, String emptyMessage) {
   final text = value?.trim() ?? '';
-  if (text.isEmpty) {
-    return emptyMessage;
-  }
+  if (text.isEmpty) return emptyMessage;
   final number = double.tryParse(text);
-  if (number == null || number <= 0) {
-    return '请输入大于 0 的数字';
-  }
+  if (number == null || number <= 0) return '请输入大于 0 的数字';
   return null;
 }
 
@@ -1524,9 +1730,7 @@ String _formatDate(DateTime value) {
   return '$year-$month-$day';
 }
 
-String _formatMoney(double value) {
-  return value.toStringAsFixed(2);
-}
+String _formatMoney(double value) => value.toStringAsFixed(2);
 
 String _formatSignedMoney(double value) {
   final sign = value > 0 ? '+' : '';
@@ -1543,14 +1747,11 @@ String _formatSignedPercent(double value) {
   return '$sign${value.toStringAsFixed(2)}%';
 }
 
-String _formatNumber(double value, int fractionDigits) {
-  return value.toStringAsFixed(fractionDigits);
-}
+String _formatNumber(double value, int fractionDigits) =>
+    value.toStringAsFixed(fractionDigits);
 
-String _formatEditableNumber(double value) {
-  return value.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
-}
+String _formatEditableNumber(double value) =>
+    value.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
 
-Color _returnColor(double value) {
-  return value >= 0 ? Colors.red.shade700 : Colors.green.shade700;
-}
+Color _returnColor(double value) =>
+    value >= 0 ? Colors.red.shade700 : Colors.green.shade700;

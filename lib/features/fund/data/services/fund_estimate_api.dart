@@ -13,6 +13,13 @@ final class FundEstimateApi {
   const FundEstimateApi(this._dio);
 
   static const _baseUrl = 'https://fundgz.1234567.com.cn/js';
+  static const _scriptAcceptHeader =
+      'application/javascript, text/javascript, '
+      'application/x-javascript, */*';
+  static const _browserUserAgent =
+      'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) '
+      'AppleWebKit/537.36 (KHTML, like Gecko) '
+      'Chrome/125.0.0.0 Safari/537.36';
   static final _fundCodePattern = RegExp(r'^\d{6}$');
 
   final Dio _dio;
@@ -29,10 +36,14 @@ final class FundEstimateApi {
         options: Options(
           responseType: ResponseType.bytes,
           validateStatus: (_) => true,
-          headers: const {
-            'User-Agent':
-                'Mozilla/5.0 (Macintosh; Intel Mac OS X) AppleWebKit/537.36',
-            'Referer': 'https://fund.eastmoney.com/',
+          headers: {
+            Headers.acceptHeader: _scriptAcceptHeader,
+            'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+            'User-Agent': _browserUserAgent,
+            'Referer': 'https://fund.eastmoney.com/$trimmedCode.html',
+            'Sec-Fetch-Dest': 'script',
+            'Sec-Fetch-Mode': 'no-cors',
+            'Sec-Fetch-Site': 'cross-site',
           },
         ),
       );
