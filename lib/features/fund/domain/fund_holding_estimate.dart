@@ -1,5 +1,22 @@
 import '../data/models/realtime_estimate.dart';
 
+/// 新增持仓草稿，尚未分配本地数据库 id。
+final class FundHoldingDraft {
+  const FundHoldingDraft({
+    required this.code,
+    required this.purchaseDate,
+    required this.shares,
+    required this.channel,
+    required this.purchaseNav,
+  });
+
+  final String code;
+  final DateTime purchaseDate;
+  final double shares;
+  final String channel;
+  final double purchaseNav;
+}
+
 /// 用户持仓输入。
 final class FundHoldingInput {
   const FundHoldingInput({

@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/repositories/fund_estimate_repository_provider.dart';
+import '../../data/repositories/fund_holding_repository_provider.dart';
 import '../../domain/fund_holding_estimate.dart';
 
 class FundHoldingEstimatePage extends ConsumerStatefulWidget {
@@ -15,6 +16,151 @@ class FundHoldingEstimatePage extends ConsumerStatefulWidget {
 
 class _FundHoldingEstimatePageState
     extends ConsumerState<FundHoldingEstimatePage> {
+  var _isLoadingHoldings = true;
+  Object? _loadHoldingsError;
+  final _holdings = <FundHoldingInput>[];
+  final _holdingStates = <int, AsyncValue<FundHoldingEstimate>>{};
+
+  @override
+  void initState() {
+    super.initState();
+    _loadHoldings();
+  }
+
+  Future<void> _loadHoldings() async {
+    try {
+      final holdings = await ref
+          .read(fundHoldingRepositoryProvider)
+          .listActiveHoldings();
+      if (!mounted) {
+        return;
+      }
+
+      setState(() {
+        _holdings
+          ..clear()
+          ..addAll(holdings);
+        _holdingStates
+          ..clear()
+          ..addEntries(
+            holdings.map(
+              (holding) => MapEntry(holding.id, const AsyncLoading()),
+            ),
+          );
+        _loadHoldingsError = null;
+        _isLoadingHoldings = false;
+      });
+
+      await Future.wait(holdings.map(_refreshHolding));
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _loadHoldingsError = error;
+        _isLoadingHoldings = false;
+      });
+    }
+  }
+
+  Future<void> _openAddHoldingPage() async {
+    final input = await Navigator.of(context).push<FundHoldingInput>(
+      MaterialPageRoute(builder: (_) => const FundHoldingEntryPage()),
+    );
+    if (input == null || !mounted) {
+      return;
+    }
+
+    setState(() {
+      _holdings.add(input);
+      _holdingStates[input.id] = const AsyncLoading();
+    });
+    await _refreshHolding(input);
+  }
+
+  Future<void> _refreshHolding(FundHoldingInput input) async {
+    setState(() => _holdingStates[input.id] = const AsyncLoading());
+    final result = await AsyncValue.guard(() async {
+      final realtimeEstimate = await ref
+          .read(fundEstimateRepositoryProvider)
+          .fetchRealtimeEstimate(input.code);
+      return calculateFundHoldingEstimate(
+        input: input,
+        realtimeEstimate: realtimeEstimate,
+      );
+    });
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      if (_holdings.any((holding) => holding.id == input.id)) {
+        _holdingStates[input.id] = result;
+      }
+    });
+  }
+
+  Future<void> _removeHolding(FundHoldingInput input) async {
+    try {
+      await ref.read(fundHoldingRepositoryProvider).softDeleteHolding(input.id);
+      if (!mounted) {
+        return;
+      }
+      setState(() {
+        _holdings.removeWhere((holding) => holding.id == input.id);
+        _holdingStates.remove(input.id);
+      });
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('删除持仓失败：$error')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('基金收益估算'),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            tooltip: '新增持仓',
+            onPressed: _openAddHoldingPage,
+            icon: const Icon(Icons.add),
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          children: [
+            _HoldingsByChannelSection(
+              holdings: _holdings,
+              states: _holdingStates,
+              isLoading: _isLoadingHoldings,
+              loadError: _loadHoldingsError,
+              onRefresh: _refreshHolding,
+              onRemove: _removeHolding,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class FundHoldingEntryPage extends ConsumerStatefulWidget {
+  const FundHoldingEntryPage({super.key});
+
+  @override
+  ConsumerState<FundHoldingEntryPage> createState() =>
+      _FundHoldingEntryPageState();
+}
+
+class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
   final _formKey = GlobalKey<FormState>();
   final _codeController = TextEditingController();
   final _sharesController = TextEditingController();
@@ -22,11 +168,7 @@ class _FundHoldingEstimatePageState
   final _purchaseNavController = TextEditingController();
 
   DateTime? _purchaseDate;
-  var _nextHoldingId = 1;
-  final _holdings = <FundHoldingInput>[];
-  final _holdingStates = <int, AsyncValue<FundHoldingEstimate>>{};
-
-  bool get _isLoading => _holdingStates.values.any((state) => state.isLoading);
+  var _isSaving = false;
 
   @override
   void dispose() {
@@ -51,7 +193,7 @@ class _FundHoldingEstimatePageState
     setState(() => _purchaseDate = picked);
   }
 
-  Future<void> _addHolding() async {
+  Future<void> _submit() async {
     if (!_formKey.currentState!.validate()) {
       return;
     }
@@ -62,8 +204,7 @@ class _FundHoldingEstimatePageState
       return;
     }
 
-    final input = FundHoldingInput(
-      id: _nextHoldingId++,
+    final draft = FundHoldingDraft(
       code: _codeController.text.trim(),
       purchaseDate: _purchaseDate!,
       shares: double.parse(_sharesController.text.trim()),
@@ -71,50 +212,30 @@ class _FundHoldingEstimatePageState
       purchaseNav: double.parse(_purchaseNavController.text.trim()),
     );
 
-    setState(() {
-      _holdings.add(input);
-      _holdingStates[input.id] = const AsyncLoading();
-    });
-    _clearEntryForm();
-    await _refreshHolding(input);
-  }
-
-  Future<void> _refreshHolding(FundHoldingInput input) async {
-    setState(() => _holdingStates[input.id] = const AsyncLoading());
-    final result = await AsyncValue.guard(() async {
-      final realtimeEstimate = await ref
-          .read(fundEstimateRepositoryProvider)
-          .fetchRealtimeEstimate(input.code);
-      return calculateFundHoldingEstimate(
-        input: input,
-        realtimeEstimate: realtimeEstimate,
-      );
-    });
-    if (!mounted) {
-      return;
+    setState(() => _isSaving = true);
+    try {
+      final input = await ref
+          .read(fundHoldingRepositoryProvider)
+          .insertHolding(draft);
+      if (!mounted) {
+        return;
+      }
+      Navigator.of(context).pop(input);
+    } catch (error) {
+      if (!mounted) {
+        return;
+      }
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('保存持仓失败：$error')));
     }
-    setState(() => _holdingStates[input.id] = result);
-  }
-
-  void _clearEntryForm() {
-    _codeController.clear();
-    _sharesController.clear();
-    _channelController.clear();
-    _purchaseNavController.clear();
-    _purchaseDate = null;
-  }
-
-  void _removeHolding(FundHoldingInput input) {
-    setState(() {
-      _holdings.removeWhere((holding) => holding.id == input.id);
-      _holdingStates.remove(input.id);
-    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('基金收益估算'), centerTitle: false),
+      appBar: AppBar(title: const Text('新增持仓'), centerTitle: false),
       body: SafeArea(
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
@@ -127,15 +248,8 @@ class _FundHoldingEstimatePageState
               purchaseNavController: _purchaseNavController,
               purchaseDate: _purchaseDate,
               onPickPurchaseDate: _pickPurchaseDate,
-              onSubmit: _addHolding,
-              isLoading: _isLoading,
-            ),
-            const SizedBox(height: 16),
-            _HoldingsByChannelSection(
-              holdings: _holdings,
-              states: _holdingStates,
-              onRefresh: _refreshHolding,
-              onRemove: _removeHolding,
+              onSubmit: _submit,
+              isSaving: _isSaving,
             ),
           ],
         ),
@@ -154,7 +268,7 @@ class _InputSection extends StatelessWidget {
     required this.purchaseDate,
     required this.onPickPurchaseDate,
     required this.onSubmit,
-    required this.isLoading,
+    required this.isSaving,
   });
 
   final GlobalKey<FormState> formKey;
@@ -165,7 +279,7 @@ class _InputSection extends StatelessWidget {
   final DateTime? purchaseDate;
   final VoidCallback onPickPurchaseDate;
   final VoidCallback onSubmit;
-  final bool isLoading;
+  final bool isSaving;
 
   @override
   Widget build(BuildContext context) {
@@ -181,7 +295,7 @@ class _InputSection extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Text('新增持仓', style: Theme.of(context).textTheme.titleMedium),
+              Text('持仓信息', style: Theme.of(context).textTheme.titleMedium),
               const SizedBox(height: 16),
               TextFormField(
                 controller: codeController,
@@ -250,8 +364,14 @@ class _InputSection extends StatelessWidget {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: isLoading ? null : onSubmit,
-                icon: const Icon(Icons.add),
+                onPressed: isSaving ? null : onSubmit,
+                icon: isSaving
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.add),
                 label: const Text('添加并计算'),
               ),
             ],
@@ -266,17 +386,37 @@ class _HoldingsByChannelSection extends StatelessWidget {
   const _HoldingsByChannelSection({
     required this.holdings,
     required this.states,
+    required this.isLoading,
+    required this.loadError,
     required this.onRefresh,
     required this.onRemove,
   });
 
   final List<FundHoldingInput> holdings;
   final Map<int, AsyncValue<FundHoldingEstimate>> states;
+  final bool isLoading;
+  final Object? loadError;
   final ValueChanged<FundHoldingInput> onRefresh;
   final ValueChanged<FundHoldingInput> onRemove;
 
   @override
   Widget build(BuildContext context) {
+    if (isLoading && holdings.isEmpty) {
+      return const _StatePanel(
+        icon: Icons.storage,
+        title: '读取本地持仓',
+        message: '正在从本地数据库加载持仓记录。',
+      );
+    }
+
+    if (loadError != null && holdings.isEmpty) {
+      return _StatePanel(
+        icon: Icons.error_outline,
+        title: '本地持仓读取失败',
+        message: loadError.toString(),
+      );
+    }
+
     if (holdings.isEmpty) {
       return const _StatePanel(
         icon: Icons.insights,
@@ -581,15 +721,139 @@ class _HoldingEstimateResult extends StatelessWidget {
           ],
         ),
         const SizedBox(height: 10),
-        Text(
-          '估值时间 ${realtime.estTime} · 昨日净值 ${_formatNumber(realtime.prevNav, 4)} (${realtime.prevNavDate})',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: Theme.of(context).colorScheme.onSurfaceVariant,
-          ),
+        _EstimateMetaRow(
+          items: [
+            _EstimateMetaItem(
+              icon: Icons.schedule,
+              label: '估值时间',
+              value: realtime.estTime,
+            ),
+            _EstimateMetaItem(
+              icon: Icons.history,
+              label: '昨日净值',
+              value: _formatNumber(realtime.prevNav, 4),
+              helper: realtime.prevNavDate,
+            ),
+          ],
         ),
       ],
     );
   }
+}
+
+class _EstimateMetaRow extends StatelessWidget {
+  const _EstimateMetaRow({required this.items});
+
+  final List<_EstimateMetaItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 480;
+        final children = items
+            .map((item) => _EstimateMetaTile(item: item))
+            .toList();
+
+        if (!isWide) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              for (final child in children) ...[
+                child,
+                if (child != children.last) const SizedBox(height: 8),
+              ],
+            ],
+          );
+        }
+
+        return Row(
+          children: [
+            for (final child in children) ...[
+              Expanded(child: child),
+              if (child != children.last) const SizedBox(width: 8),
+            ],
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _EstimateMetaTile extends StatelessWidget {
+  const _EstimateMetaTile({required this.item});
+
+  final _EstimateMetaItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(item.icon, size: 18, color: colorScheme.onSurfaceVariant),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.label,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    item.value,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  if (item.helper != null) ...[
+                    const SizedBox(height: 2),
+                    Text(
+                      item.helper!,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _EstimateMetaItem {
+  const _EstimateMetaItem({
+    required this.icon,
+    required this.label,
+    required this.value,
+    this.helper,
+  });
+
+  final IconData icon;
+  final String label;
+  final String value;
+  final String? helper;
 }
 
 class _HoldingLoading extends StatelessWidget {

@@ -32,7 +32,6 @@ class NewsApp extends ConsumerWidget {
 
     return MaterialApp.router(
       title: 'News Course',
-      debugShowCheckedModeBanner: false,
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xff2563eb)),
         useMaterial3: true,
