@@ -47,6 +47,7 @@ final class DriftFundHoldingRepository implements FundHoldingRepository {
             shares: draft.shares,
             channel: draft.channel,
             purchaseNav: draft.purchaseNav,
+            fee: Value(draft.fee),
             createdAt: now,
             updatedAt: now,
           ),
@@ -73,6 +74,7 @@ final class DriftFundHoldingRepository implements FundHoldingRepository {
             shares: Value(draft.shares),
             channel: Value(draft.channel),
             purchaseNav: Value(draft.purchaseNav),
+            fee: Value(draft.fee),
             updatedAt: Value(now),
           ),
         );
@@ -103,5 +105,6 @@ FundHoldingInput _toInput(FundHolding row) {
     shares: row.shares,
     channel: row.channel,
     purchaseNav: row.purchaseNav,
+    fee: row.fee,
   );
 }

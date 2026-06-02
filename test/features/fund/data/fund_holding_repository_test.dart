@@ -28,6 +28,7 @@ void main() {
         shares: 500,
         channel: '支付宝',
         purchaseNav: 2.05,
+        fee: 0,
       ),
     );
     await repository.insertHolding(
@@ -37,6 +38,7 @@ void main() {
         shares: 1000,
         channel: '支付宝',
         purchaseNav: 2,
+        fee: 3,
       ),
     );
 
@@ -46,6 +48,7 @@ void main() {
     expect(holdings[0].purchaseDate, earlier);
     expect(holdings[1].purchaseDate, later);
     expect(holdings[0].id, isPositive);
+    expect(holdings[0].fee, 3);
   });
 
   test('soft deletes holdings from active list', () async {
@@ -56,6 +59,7 @@ void main() {
         shares: 1000,
         channel: '银行',
         purchaseNav: 2,
+        fee: 0,
       ),
     );
 
@@ -72,6 +76,7 @@ void main() {
         shares: 1000,
         channel: '支付宝',
         purchaseNav: 2,
+        fee: 0,
       ),
     );
 
@@ -83,6 +88,7 @@ void main() {
         shares: 1500,
         channel: '天天基金',
         purchaseNav: 1.5,
+        fee: 6.5,
       ),
     );
 
@@ -92,6 +98,7 @@ void main() {
     expect(updated.shares, 1500);
     expect(updated.channel, '天天基金');
     expect(updated.purchaseNav, 1.5);
+    expect(updated.fee, 6.5);
     final holdings = await repository.listActiveHoldings();
     expect(holdings, hasLength(1));
     expect(holdings.single.id, updated.id);
@@ -100,6 +107,7 @@ void main() {
     expect(holdings.single.shares, updated.shares);
     expect(holdings.single.channel, updated.channel);
     expect(holdings.single.purchaseNav, updated.purchaseNav);
+    expect(holdings.single.fee, updated.fee);
   });
 
   test(
@@ -114,6 +122,7 @@ void main() {
           shares: 1000,
           channel: '天天基金',
           purchaseNav: 2,
+          fee: 0,
         ),
       );
       await repository.insertHolding(
@@ -123,6 +132,7 @@ void main() {
           shares: 500,
           channel: '天天基金',
           purchaseNav: 2,
+          fee: 0,
         ),
       );
 

@@ -8,6 +8,7 @@ final class FundHoldingDraft {
     required this.shares,
     required this.channel,
     required this.purchaseNav,
+    required this.fee,
   });
 
   final String code;
@@ -15,6 +16,7 @@ final class FundHoldingDraft {
   final double shares;
   final String channel;
   final double purchaseNav;
+  final double fee;
 }
 
 /// 用户持仓输入。
@@ -26,6 +28,7 @@ final class FundHoldingInput {
     required this.shares,
     required this.channel,
     required this.purchaseNav,
+    required this.fee,
   });
 
   final int id;
@@ -34,6 +37,7 @@ final class FundHoldingInput {
   final double shares;
   final String channel;
   final double purchaseNav;
+  final double fee;
 }
 
 /// 基于盘中估值和持仓输入计算出的收益结果。
@@ -71,8 +75,11 @@ FundHoldingEstimate calculateFundHoldingEstimate({
       'must be greater than 0',
     );
   }
+  if (input.fee < 0) {
+    throw ArgumentError.value(input.fee, 'fee', 'must not be negative');
+  }
 
-  final cost = input.purchaseNav * input.shares;
+  final cost = input.purchaseNav * input.shares + input.fee;
   final estimatedValue = realtimeEstimate.estNav * input.shares;
   final totalReturn = estimatedValue - cost;
 

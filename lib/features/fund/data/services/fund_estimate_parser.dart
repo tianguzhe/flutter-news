@@ -3,6 +3,13 @@ import 'dart:convert';
 import '../models/realtime_estimate.dart';
 import 'fund_estimate_exception.dart';
 
+final class HistoricalNav {
+  const HistoricalNav({required this.date, required this.nav});
+
+  final String date;
+  final double nav;
+}
+
 /// 剥离 `jsonpgz(...)` 包裹并解析基金估值。
 RealtimeEstimate parseFundEstimateJsonp(String body, {String code = ''}) {
   final trimmed = body.trim();
@@ -44,4 +51,35 @@ double _parseDouble(Object? value, String field) {
     throw FundEstimateException('估值字段 $field 非法数值: "$text"');
   }
   return number;
+}
+
+List<HistoricalNav> parseHistoricalNavList(String body) {
+  final Map<String, dynamic> raw;
+  try {
+    raw = jsonDecode(body) as Map<String, dynamic>;
+  } on FormatException {
+    throw FundEstimateException('解析历史净值 JSON 失败');
+  } on TypeError {
+    throw FundEstimateException('解析历史净值 JSON 失败');
+  }
+
+  final data = raw['Data'];
+  if (data is! Map<String, dynamic>) {
+    throw const FundEstimateException('历史净值响应缺少 Data');
+  }
+  final list = data['LSJZList'];
+  if (list is! List) {
+    throw const FundEstimateException('历史净值响应缺少 LSJZList');
+  }
+
+  return list
+      .whereType<Map<String, dynamic>>()
+      .map(
+        (item) => HistoricalNav(
+          date: item['FSRQ']?.toString() ?? '',
+          nav: _parseDouble(item['DWJZ'], 'DWJZ'),
+        ),
+      )
+      .where((item) => item.date.isNotEmpty)
+      .toList();
 }

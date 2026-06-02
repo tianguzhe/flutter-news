@@ -13,6 +13,7 @@ final class FundEstimateApi {
   const FundEstimateApi(this._dio);
 
   static const _baseUrl = 'https://fundgz.1234567.com.cn/js';
+  static const _historyUrl = 'https://api.fund.eastmoney.com/f10/lsjz';
   static const _scriptAcceptHeader =
       'application/javascript, text/javascript, '
       'application/x-javascript, */*';
@@ -53,15 +54,61 @@ final class FundEstimateApi {
         throw ApiException('fundgz HTTP $statusCode', statusCode: statusCode);
       }
 
-      return parseFundEstimateJsonp(
+      final realtimeEstimate = parseFundEstimateJsonp(
         _decodeBody(response.data),
         code: trimmedCode,
       );
+      return _withPreviousTradingNav(realtimeEstimate);
     } on FundEstimateException catch (error) {
       throw ApiException(error.message);
     } catch (error) {
       throw mapNetworkError(error);
     }
+  }
+
+  Future<RealtimeEstimate> _withPreviousTradingNav(
+    RealtimeEstimate estimate,
+  ) async {
+    final response = await _dio.get<Object>(
+      _historyUrl,
+      queryParameters: {
+        'fundCode': estimate.code,
+        'pageIndex': 1,
+        'pageSize': 3,
+        'startDate': '',
+        'endDate': '',
+      },
+      options: Options(
+        responseType: ResponseType.bytes,
+        validateStatus: (_) => true,
+        headers: {
+          Headers.acceptHeader: 'application/json, text/plain, */*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'User-Agent': _browserUserAgent,
+          'Referer': 'https://fundf10.eastmoney.com/jjjz_${estimate.code}.html',
+        },
+      ),
+    );
+
+    final statusCode = response.statusCode ?? 0;
+    if (statusCode != 200) {
+      throw ApiException('历史净值 HTTP $statusCode', statusCode: statusCode);
+    }
+
+    final history = parseHistoricalNavList(_decodeBody(response.data));
+    if (history.length < 2) return estimate;
+
+    final latestIndex = history.indexWhere(
+      (item) => item.date == estimate.prevNavDate,
+    );
+    final previous = latestIndex >= 0 && latestIndex + 1 < history.length
+        ? history[latestIndex + 1]
+        : history[1];
+
+    return estimate.copyWith(
+      previousTradingNavDate: previous.date,
+      previousTradingNav: previous.nav,
+    );
   }
 
   String _decodeBody(Object? data) {

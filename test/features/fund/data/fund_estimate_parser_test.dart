@@ -55,4 +55,22 @@ void main() {
       );
     });
   });
+
+  group('parseHistoricalNavList', () {
+    test('parses recent net values in response order', () {
+      const body =
+          '{"Data":{"LSJZList":['
+          '{"FSRQ":"2026-06-01","DWJZ":"1.8950"},'
+          '{"FSRQ":"2026-05-29","DWJZ":"1.8980"}'
+          ']}}';
+
+      final history = parseHistoricalNavList(body);
+
+      expect(history, hasLength(2));
+      expect(history[0].date, '2026-06-01');
+      expect(history[0].nav, closeTo(1.8950, 1e-9));
+      expect(history[1].date, '2026-05-29');
+      expect(history[1].nav, closeTo(1.8980, 1e-9));
+    });
+  });
 }

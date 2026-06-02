@@ -8,6 +8,8 @@ final class RealtimeEstimate {
     required this.estNav,
     required this.estChangePct,
     required this.estTime,
+    this.previousTradingNavDate,
+    this.previousTradingNav,
   });
 
   final String code;
@@ -17,8 +19,35 @@ final class RealtimeEstimate {
   final double estNav;
   final double estChangePct;
   final String estTime;
+  final String? previousTradingNavDate;
+  final double? previousTradingNav;
 
   bool get isUp => estChangePct >= 0;
+
+  RealtimeEstimate copyWith({
+    String? code,
+    String? name,
+    String? prevNavDate,
+    double? prevNav,
+    double? estNav,
+    double? estChangePct,
+    String? estTime,
+    String? previousTradingNavDate,
+    double? previousTradingNav,
+  }) {
+    return RealtimeEstimate(
+      code: code ?? this.code,
+      name: name ?? this.name,
+      prevNavDate: prevNavDate ?? this.prevNavDate,
+      prevNav: prevNav ?? this.prevNav,
+      estNav: estNav ?? this.estNav,
+      estChangePct: estChangePct ?? this.estChangePct,
+      estTime: estTime ?? this.estTime,
+      previousTradingNavDate:
+          previousTradingNavDate ?? this.previousTradingNavDate,
+      previousTradingNav: previousTradingNav ?? this.previousTradingNav,
+    );
+  }
 
   @override
   String toString() {

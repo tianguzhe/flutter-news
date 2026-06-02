@@ -10,6 +10,7 @@ class FundHoldings extends Table {
   RealColumn get shares => real()();
   TextColumn get channel => text()();
   RealColumn get purchaseNav => real()();
+  RealColumn get fee => real().withDefault(const Constant(0))();
   DateTimeColumn get createdAt => dateTime()();
   DateTimeColumn get updatedAt => dateTime()();
   DateTimeColumn get deletedAt => dateTime().nullable()();
@@ -21,5 +22,16 @@ final class FundHoldingsDatabase extends _$FundHoldingsDatabase {
     : super(executor ?? driftDatabase(name: 'fund_holdings'));
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration {
+    return MigrationStrategy(
+      onUpgrade: (migrator, from, to) async {
+        if (from < 2) {
+          await migrator.addColumn(fundHoldings, fundHoldings.fee);
+        }
+      },
+    );
+  }
 }

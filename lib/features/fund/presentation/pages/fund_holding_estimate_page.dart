@@ -183,22 +183,26 @@ class _PortfolioOverview extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final channels = holdings.map((h) => h.channel).toSet().length;
     final totalCost = estimates.fold<double>(0, (s, e) => s + e.cost);
-    final totalValue = estimates.fold<double>(
+    final estimatedValue = estimates.fold<double>(
       0,
       (s, e) => s + e.estimatedValue,
     );
-    final totalReturn = totalValue - totalCost;
-    final totalRate = totalCost == 0 ? 0.0 : totalReturn / totalCost;
+    final yesterdayValue = estimates.fold<double>(
+      0,
+      (s, e) => s + _yesterdayValue(e),
+    );
+    final confirmedTotalReturn = yesterdayValue - totalCost;
+    final yesterdayActualReturn = estimates.fold<double>(
+      0,
+      (s, e) => s + _yesterdayActualReturn(e),
+    );
+    final yesterdayRate = _returnRate(yesterdayActualReturn, totalCost);
     final hasEstimate = estimates.isNotEmpty;
-    final returnColor = hasEstimate ? _returnColor(totalReturn) : cs.primary;
-    final todayFloat = hasEstimate
-        ? estimates.fold<double>(
-            0,
-            (s, e) =>
-                s +
-                (e.realtimeEstimate.estNav - e.realtimeEstimate.prevNav) *
-                    e.input.shares,
-          )
+    final returnColor = hasEstimate
+        ? _returnColor(yesterdayActualReturn)
+        : cs.primary;
+    final todayEstimate = hasEstimate
+        ? estimates.fold<double>(0, (s, e) => s + _todayEstimatedReturn(e))
         : 0.0;
 
     return Container(
@@ -238,33 +242,42 @@ class _PortfolioOverview extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (hasEstimate)
-                  _TrendPill(
-                    label: _formatPercent(totalRate),
-                    color: returnColor,
-                  ),
+                if (hasEstimate) _CountPill(label: '昨日确认'),
               ],
             ),
             const SizedBox(height: 16),
             _AmountPanel(
-              label: hasEstimate ? '持仓总收益' : '正在拉取盘中估值',
-              value: hasEstimate ? _formatSignedMoney(totalReturn) : '估算中...',
+              label: hasEstimate ? '昨日资产变动' : '正在拉取盘中估值',
+              value: hasEstimate
+                  ? _formatSignedMoney(yesterdayActualReturn)
+                  : '估算中...',
               color: returnColor,
+              trailingColor: hasEstimate
+                  ? _signedColor(todayEstimate, cs)
+                  : null,
               trailing: hasEstimate
-                  ? _formatSignedMoney(todayFloat)
+                  ? _formatSignedMoney(todayEstimate)
                   : '${holdings.length} 笔',
-              trailingLabel: hasEstimate ? '今日浮动' : '持仓数量',
+              trailingLabel: hasEstimate ? '今日预估收益' : '持仓数量',
             ),
             const SizedBox(height: 12),
             _SummaryMetricGrid(
               items: [
                 _MetricItem(
-                  '估算总市值',
-                  hasEstimate ? _formatMoney(totalValue) : '--',
+                  '今日估算市值',
+                  hasEstimate ? _formatMoney(estimatedValue) : '--',
                 ),
                 _MetricItem(
                   '持仓成本',
                   hasEstimate ? _formatMoney(totalCost) : '--',
+                ),
+                _MetricItem(
+                  '累计到昨日收益',
+                  hasEstimate ? _formatSignedMoney(confirmedTotalReturn) : '--',
+                ),
+                _MetricItem(
+                  '昨日变动率',
+                  hasEstimate ? _formatPercent(yesterdayRate) : '--',
                 ),
                 _MetricItem('持仓渠道', '$channels 个'),
               ],
@@ -283,6 +296,7 @@ class _AmountPanel extends StatelessWidget {
     required this.color,
     required this.trailing,
     required this.trailingLabel,
+    this.trailingColor,
   });
 
   final String label;
@@ -290,6 +304,7 @@ class _AmountPanel extends StatelessWidget {
   final Color color;
   final String trailing;
   final String trailingLabel;
+  final Color? trailingColor;
 
   @override
   Widget build(BuildContext context) {
@@ -305,6 +320,7 @@ class _AmountPanel extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Expanded(
+            flex: 3,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -331,26 +347,31 @@ class _AmountPanel extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              Text(
-                trailingLabel,
-                style: Theme.of(
-                  context,
-                ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
-              ),
-              const SizedBox(height: 6),
-              Text(
-                trailing,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  color: color,
-                  fontWeight: FontWeight.w800,
+          Flexible(
+            flex: 2,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  trailingLabel,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
                 ),
-              ),
-            ],
+                const SizedBox(height: 6),
+                Text(
+                  trailing,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: trailingColor ?? color,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
           ),
         ],
       ),
@@ -492,6 +513,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
   final _sharesController = TextEditingController();
   final _channelController = TextEditingController();
   final _purchaseNavController = TextEditingController();
+  final _feeController = TextEditingController(text: '0');
 
   DateTime? _purchaseDate;
   var _isSaving = false;
@@ -507,6 +529,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
     _sharesController.text = _formatEditableNumber(holding.shares);
     _channelController.text = holding.channel;
     _purchaseNavController.text = _formatEditableNumber(holding.purchaseNav);
+    _feeController.text = _formatEditableNumber(holding.fee);
     _purchaseDate = holding.purchaseDate;
   }
 
@@ -516,6 +539,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
     _sharesController.dispose();
     _channelController.dispose();
     _purchaseNavController.dispose();
+    _feeController.dispose();
     super.dispose();
   }
 
@@ -546,6 +570,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
       shares: double.parse(_sharesController.text.trim()),
       channel: _channelController.text.trim(),
       purchaseNav: double.parse(_purchaseNavController.text.trim()),
+      fee: double.parse(_feeController.text.trim()),
     );
 
     setState(() => _isSaving = true);
@@ -590,6 +615,7 @@ class _FundHoldingEntryPageState extends ConsumerState<FundHoldingEntryPage> {
               sharesController: _sharesController,
               channelController: _channelController,
               purchaseNavController: _purchaseNavController,
+              feeController: _feeController,
               purchaseDate: _purchaseDate,
               onPickPurchaseDate: _pickPurchaseDate,
               onSubmit: _submit,
@@ -610,6 +636,7 @@ class _EntryFormCard extends StatelessWidget {
     required this.sharesController,
     required this.channelController,
     required this.purchaseNavController,
+    required this.feeController,
     required this.purchaseDate,
     required this.onPickPurchaseDate,
     required this.onSubmit,
@@ -622,6 +649,7 @@ class _EntryFormCard extends StatelessWidget {
   final TextEditingController sharesController;
   final TextEditingController channelController;
   final TextEditingController purchaseNavController;
+  final TextEditingController feeController;
   final DateTime? purchaseDate;
   final VoidCallback onPickPurchaseDate;
   final VoidCallback onSubmit;
@@ -820,6 +848,25 @@ class _EntryFormCard extends StatelessWidget {
                     inputFormatters: [_DecimalTextInputFormatter()],
                     validator: (v) => _validatePositiveNumber(v, '请输入购买时净值'),
                   ),
+                  const SizedBox(height: 12),
+                  TextFormField(
+                    controller: feeController,
+                    decoration: InputDecoration(
+                      labelText: '手续费',
+                      hintText: '没有就填 0',
+                      border: const OutlineInputBorder(),
+                      prefixIcon: Icon(
+                        Icons.payments_outlined,
+                        color: cs.primary,
+                        size: 20,
+                      ),
+                    ),
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    inputFormatters: [_DecimalTextInputFormatter()],
+                    validator: _validateNonNegativeNumber,
+                  ),
                   const SizedBox(height: 20),
                   FilledButton.icon(
                     onPressed: isSaving ? null : onSubmit,
@@ -953,14 +1000,28 @@ class _ChannelGroupCard extends StatelessWidget {
         .map((s) => s.value)
         .toList();
     final totalCost = estimates.fold<double>(0, (s, e) => s + e.cost);
-    final totalValue = estimates.fold<double>(
+    final estimatedValue = estimates.fold<double>(
       0,
       (s, e) => s + e.estimatedValue,
     );
-    final totalReturn = totalValue - totalCost;
-    final totalRate = totalCost == 0 ? 0.0 : totalReturn / totalCost;
+    final yesterdayValue = estimates.fold<double>(
+      0,
+      (s, e) => s + _yesterdayValue(e),
+    );
+    final confirmedTotalReturn = yesterdayValue - totalCost;
+    final yesterdayActualReturn = estimates.fold<double>(
+      0,
+      (s, e) => s + _yesterdayActualReturn(e),
+    );
+    final yesterdayRate = _returnRate(yesterdayActualReturn, totalCost);
+    final todayEstimate = estimates.fold<double>(
+      0,
+      (s, e) => s + _todayEstimatedReturn(e),
+    );
     final hasEstimate = estimates.isNotEmpty;
-    final returnColor = hasEstimate ? _returnColor(totalReturn) : cs.primary;
+    final returnColor = hasEstimate
+        ? _returnColor(yesterdayActualReturn)
+        : cs.primary;
 
     return Container(
       decoration: BoxDecoration(
@@ -1005,24 +1066,39 @@ class _ChannelGroupCard extends StatelessWidget {
                     ],
                   ),
                 ),
-                if (hasEstimate)
-                  _TrendPill(
-                    label: _formatPercent(totalRate),
-                    color: returnColor,
-                  )
-                else
-                  _CountPill(label: '${holdings.length} 笔'),
+                _CountPill(
+                  label: hasEstimate ? '昨日确认' : '${holdings.length} 笔',
+                ),
               ],
             ),
           ),
           if (hasEstimate) ...[
             Padding(
               padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
-              child: _SummaryMetricGrid(
-                items: [
-                  _MetricItem('总市值', _formatMoney(totalValue)),
-                  _MetricItem('持仓成本', _formatMoney(totalCost)),
-                  _MetricItem('渠道收益', _formatSignedMoney(totalReturn)),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _AmountPanel(
+                    label: '昨日资产变动',
+                    value: _formatSignedMoney(yesterdayActualReturn),
+                    color: returnColor,
+                    trailing: _formatSignedMoney(todayEstimate),
+                    trailingLabel: '今日预估收益',
+                    trailingColor: _signedColor(todayEstimate, cs),
+                  ),
+                  const SizedBox(height: 8),
+                  _SummaryMetricGrid(
+                    items: [
+                      _MetricItem('今日估算市值', _formatMoney(estimatedValue)),
+                      _MetricItem('昨日确认市值', _formatMoney(yesterdayValue)),
+                      _MetricItem('持仓成本', _formatMoney(totalCost)),
+                      _MetricItem(
+                        '累计到昨日收益',
+                        _formatSignedMoney(confirmedTotalReturn),
+                      ),
+                      _MetricItem('昨日变动率', _formatPercent(yesterdayRate)),
+                    ],
+                  ),
                 ],
               ),
             ),
@@ -1097,7 +1173,7 @@ class _HoldingCard extends StatelessWidget {
     final accentColor = state.when(
       loading: () => cs.outline,
       error: (_, _) => cs.error,
-      data: (e) => _returnColor(e.totalReturn),
+      data: (e) => _returnColor(_yesterdayActualReturn(e)),
     );
 
     return Container(
@@ -1156,7 +1232,15 @@ class _HoldingEstimateResult extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = _returnColor(estimate.totalReturn);
+    final yesterdayActualReturn = _yesterdayActualReturn(estimate);
+    final yesterdayActualRate = _returnRate(
+      yesterdayActualReturn,
+      estimate.cost,
+    );
+    final confirmedTotalReturn = _confirmedTotalReturn(estimate);
+    final confirmedTotalRate = _returnRate(confirmedTotalReturn, estimate.cost);
+    final todayEstimate = _todayEstimatedReturn(estimate);
+    final color = _returnColor(yesterdayActualReturn);
     final realtime = estimate.realtimeEstimate;
 
     return Column(
@@ -1172,8 +1256,9 @@ class _HoldingEstimateResult extends StatelessWidget {
         ),
         const SizedBox(height: 12),
         _ReturnBanner(
-          totalReturn: estimate.totalReturn,
-          totalReturnRate: estimate.totalReturnRate,
+          totalReturn: yesterdayActualReturn,
+          totalReturnRate: yesterdayActualRate,
+          todayEstimate: todayEstimate,
           color: color,
         ),
         const SizedBox(height: 12),
@@ -1183,6 +1268,12 @@ class _HoldingEstimateResult extends StatelessWidget {
             _MetricItem('估值涨跌幅', _formatSignedPercent(realtime.estChangePct)),
             _MetricItem('估算市值', _formatMoney(estimate.estimatedValue)),
             _MetricItem('持仓成本', _formatMoney(estimate.cost)),
+            _MetricItem('昨日资产变动', _formatSignedMoney(yesterdayActualReturn)),
+            _MetricItem('昨日变动率', _formatPercent(yesterdayActualRate)),
+            _MetricItem('累计到昨日收益', _formatSignedMoney(confirmedTotalReturn)),
+            _MetricItem('累计收益率', _formatPercent(confirmedTotalRate)),
+            _MetricItem('今日预估收益', _formatSignedMoney(todayEstimate)),
+            _MetricItem('手续费', _formatMoney(estimate.input.fee)),
             _MetricItem('购买净值', _formatNumber(estimate.input.purchaseNav, 4)),
             _MetricItem('持有份额', _formatNumber(estimate.input.shares, 2)),
           ],
@@ -1201,6 +1292,13 @@ class _HoldingEstimateResult extends StatelessWidget {
               value: _formatNumber(realtime.prevNav, 4),
               helper: realtime.prevNavDate,
             ),
+            if (realtime.previousTradingNav != null)
+              _EstimateMetaItem(
+                icon: Icons.trending_flat,
+                label: '上一交易日净值',
+                value: _formatNumber(realtime.previousTradingNav!, 4),
+                helper: realtime.previousTradingNavDate,
+              ),
           ],
         ),
       ],
@@ -1212,11 +1310,13 @@ class _ReturnBanner extends StatelessWidget {
   const _ReturnBanner({
     required this.totalReturn,
     required this.totalReturnRate,
+    required this.todayEstimate,
     required this.color,
   });
 
   final double totalReturn;
   final double totalReturnRate;
+  final double todayEstimate;
   final Color color;
 
   @override
@@ -1238,7 +1338,7 @@ class _ReturnBanner extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    '总收益',
+                    '昨日资产变动',
                     style: Theme.of(context).textTheme.labelMedium?.copyWith(
                       color: cs.onSurfaceVariant,
                     ),
@@ -1254,11 +1354,41 @@ class _ReturnBanner extends StatelessWidget {
                           ?.copyWith(color: color, fontWeight: FontWeight.w800),
                     ),
                   ),
+                  const SizedBox(height: 3),
+                  Text(
+                    '昨日变动率 ${_formatPercent(totalReturnRate)}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                      color: cs.onSurfaceVariant,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
                 ],
               ),
             ),
             const SizedBox(width: 12),
-            _TrendPill(label: _formatPercent(totalReturnRate), color: color),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Text(
+                  '今日预估收益',
+                  style: Theme.of(
+                    context,
+                  ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _formatSignedMoney(todayEstimate),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: _signedColor(todayEstimate, cs),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -1268,6 +1398,7 @@ class _ReturnBanner extends StatelessWidget {
 
 class _EstimateMetaRow extends StatelessWidget {
   const _EstimateMetaRow({required this.items});
+
   final List<_EstimateMetaItem> items;
 
   @override
@@ -1305,6 +1436,7 @@ class _EstimateMetaRow extends StatelessWidget {
 
 class _EstimateMetaTile extends StatelessWidget {
   const _EstimateMetaTile({required this.item});
+
   final _EstimateMetaItem item;
 
   @override
@@ -1371,6 +1503,7 @@ class _EstimateMetaItem {
     required this.value,
     this.helper,
   });
+
   final IconData icon;
   final String label;
   final String value;
@@ -1379,6 +1512,7 @@ class _EstimateMetaItem {
 
 class _HoldingLoading extends StatelessWidget {
   const _HoldingLoading({required this.holding});
+
   final FundHoldingInput holding;
 
   @override
@@ -1571,6 +1705,7 @@ class _IconActionButton extends StatelessWidget {
 
 class _MetricGrid extends StatelessWidget {
   const _MetricGrid({required this.items});
+
   final List<_MetricItem> items;
 
   @override
@@ -1599,6 +1734,7 @@ class _MetricGrid extends StatelessWidget {
 
 class _MetricTile extends StatelessWidget {
   const _MetricTile({required this.item});
+
   final _MetricItem item;
 
   @override
@@ -1640,6 +1776,7 @@ class _MetricTile extends StatelessWidget {
 
 class _MetricItem {
   const _MetricItem(this.label, this.value);
+
   final String label;
   final String value;
 }
@@ -1723,6 +1860,14 @@ String? _validatePositiveNumber(String? value, String emptyMessage) {
   return null;
 }
 
+String? _validateNonNegativeNumber(String? value) {
+  final text = value?.trim() ?? '';
+  if (text.isEmpty) return '请输入手续费，没有就填 0';
+  final number = double.tryParse(text);
+  if (number == null || number < 0) return '请输入不小于 0 的数字';
+  return null;
+}
+
 String _formatDate(DateTime value) {
   final year = value.year.toString().padLeft(4, '0');
   final month = value.month.toString().padLeft(2, '0');
@@ -1753,5 +1898,32 @@ String _formatNumber(double value, int fractionDigits) =>
 String _formatEditableNumber(double value) =>
     value.toStringAsFixed(8).replaceFirst(RegExp(r'\.?0+$'), '');
 
+double _yesterdayValue(FundHoldingEstimate estimate) =>
+    estimate.realtimeEstimate.prevNav * estimate.input.shares;
+
+double _confirmedTotalReturn(FundHoldingEstimate estimate) =>
+    _yesterdayValue(estimate) - estimate.cost;
+
+double _yesterdayActualReturn(FundHoldingEstimate estimate) {
+  final previousNav = estimate.realtimeEstimate.previousTradingNav;
+  if (previousNav == null) return 0;
+  return (estimate.realtimeEstimate.prevNav - previousNav) *
+      estimate.input.shares;
+}
+
+double _todayEstimatedReturn(FundHoldingEstimate estimate) =>
+    (estimate.realtimeEstimate.estNav - estimate.realtimeEstimate.prevNav) *
+    estimate.input.shares;
+
+double _returnRate(double totalReturn, double cost) {
+  if (cost == 0) return 0;
+  return totalReturn / cost;
+}
+
 Color _returnColor(double value) =>
     value >= 0 ? Colors.red.shade700 : Colors.green.shade700;
+
+Color _signedColor(double value, ColorScheme colorScheme) {
+  if (value == 0) return colorScheme.onSurfaceVariant;
+  return _returnColor(value);
+}

@@ -51,15 +51,19 @@ void main() {
       expect(find.text('组合概览'), findsOneWidget);
       expect(find.text('易方达裕丰回报债券A (000171)'), findsNWidgets(2));
       expect(find.textContaining('买入日'), findsNWidgets(2));
-      expect(find.text('+100.00'), findsAtLeastNWidgets(1));
-      expect(find.text('+25.00'), findsOneWidget);
-      expect(find.text('总收益'), findsAtLeastNWidgets(1));
-      expect(find.text('+5.00%'), findsOneWidget);
-      expect(find.text('+2.44%'), findsOneWidget);
+      expect(find.text('-10.00'), findsAtLeastNWidgets(1));
+      expect(find.text('-5.00'), findsAtLeastNWidgets(1));
+      expect(find.text('昨日资产变动'), findsAtLeastNWidgets(1));
+      expect(find.text('今日预估收益'), findsAtLeastNWidgets(1));
+      expect(find.text('累计到昨日收益'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+4.00%'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+1.46%'), findsAtLeastNWidgets(1));
+      expect(find.text('+20.00'), findsAtLeastNWidgets(1));
+      expect(find.text('+10.00'), findsAtLeastNWidgets(1));
       expect(find.text('2.1000'), findsNWidgets(2));
       expect(find.text('2100.00'), findsOneWidget);
-      expect(find.text('渠道收益'), findsOneWidget);
-      expect(find.textContaining('+125.00'), findsAtLeastNWidgets(1));
+      expect(find.text('-15.00'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+95.00'), findsAtLeastNWidgets(1));
       expect(await holdingRepository.listActiveHoldings(), hasLength(2));
     },
   );
@@ -78,6 +82,7 @@ void main() {
           shares: 1000,
           channel: '天天基金',
           purchaseNav: 2,
+          fee: 0,
         ),
       ],
     );
@@ -97,7 +102,9 @@ void main() {
     expect(find.text('天天基金'), findsOneWidget);
     expect(find.text('组合概览'), findsOneWidget);
     expect(find.text('易方达裕丰回报债券A (000171)'), findsOneWidget);
-    expect(find.text('+100.00'), findsAtLeastNWidgets(1));
+    expect(find.text('-10.00'), findsAtLeastNWidgets(1));
+    expect(find.text('+80.00'), findsAtLeastNWidgets(1));
+    expect(find.text('+20.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171']);
   });
 
@@ -113,6 +120,7 @@ void main() {
           shares: 1000,
           channel: '银行',
           purchaseNav: 2,
+          fee: 0,
         ),
       ],
     );
@@ -154,6 +162,7 @@ void main() {
           shares: 1000,
           channel: '银行',
           purchaseNav: 2,
+          fee: 0,
         ),
       ],
     );
@@ -178,10 +187,12 @@ void main() {
     expect(find.widgetWithText(TextFormField, '1000'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, '银行'), findsOneWidget);
     expect(find.widgetWithText(TextFormField, '2'), findsOneWidget);
+    expect(find.widgetWithText(TextFormField, '0'), findsOneWidget);
 
     await tester.enterText(find.widgetWithText(TextFormField, '份额'), '1500');
     await tester.enterText(find.widgetWithText(TextFormField, '渠道'), '天天基金');
     await tester.enterText(find.widgetWithText(TextFormField, '购买时净值'), '1.5');
+    await tester.enterText(find.widgetWithText(TextFormField, '手续费'), '10');
     await tester.tap(find.text('保存并计算'));
     await tester.pump();
     await tester.pumpAndSettle();
@@ -192,9 +203,12 @@ void main() {
     expect(holdings.single.shares, 1500);
     expect(holdings.single.channel, '天天基金');
     expect(holdings.single.purchaseNav, 1.5);
+    expect(holdings.single.fee, 10);
     expect(find.text('银行'), findsNothing);
     expect(find.text('天天基金'), findsOneWidget);
-    expect(find.text('+900.00'), findsAtLeastNWidgets(1));
+    expect(find.text('-15.00'), findsAtLeastNWidgets(1));
+    expect(find.text('+860.00'), findsAtLeastNWidgets(1));
+    expect(find.text('+30.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171', '000171']);
   });
 
@@ -212,6 +226,7 @@ void main() {
           shares: 1000,
           channel: '银行',
           purchaseNav: 2,
+          fee: 0,
         ),
       ],
     );
@@ -233,6 +248,57 @@ void main() {
     expect(find.text('组合概览'), findsOneWidget);
     expect(find.text('今日估算净值'), findsOneWidget);
   });
+
+  testWidgets('shows previous trading day movement as yesterday return', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1000));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    final holdingRepository = _FakeFundHoldingRepository(
+      initialHoldings: [
+        FundHoldingInput(
+          id: 1,
+          code: '000385',
+          purchaseDate: DateTime(2026, 5, 18),
+          shares: 48263.58,
+          channel: '天天基金',
+          purchaseNav: 1.895,
+          fee: 0,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fundEstimateRepositoryProvider.overrideWithValue(
+            _FakeFundEstimateRepository(
+              estimate: const RealtimeEstimate(
+                code: '000385',
+                name: '景顺长城景颐双利债券A',
+                prevNavDate: '2026-06-01',
+                prevNav: 1.895,
+                estNav: 1.895,
+                estChangePct: 0,
+                estTime: '2026-06-02 15:00',
+                previousTradingNavDate: '2026-05-29',
+                previousTradingNav: 1.898,
+              ),
+            ),
+          ),
+          fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+        ],
+        child: const MaterialApp(home: FundHoldingEstimatePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('-144.79'), findsAtLeastNWidgets(1));
+    expect(find.text('累计到昨日收益'), findsAtLeastNWidgets(1));
+    expect(find.text('0.00'), findsAtLeastNWidgets(1));
+    expect(find.text('上一交易日净值'), findsOneWidget);
+    expect(find.text('1.8980'), findsOneWidget);
+  });
 }
 
 Future<void> _addHolding(
@@ -253,6 +319,7 @@ Future<void> _addHolding(
     find.widgetWithText(TextFormField, '购买时净值'),
     purchaseNav,
   );
+  await tester.enterText(find.widgetWithText(TextFormField, '手续费'), '0');
 
   await tester.tap(find.text('选择购买时间'));
   await tester.pumpAndSettle();
@@ -266,20 +333,28 @@ Future<void> _addHolding(
 }
 
 final class _FakeFundEstimateRepository implements FundEstimateRepository {
+  _FakeFundEstimateRepository({RealtimeEstimate? estimate})
+    : _estimate =
+          estimate ??
+          const RealtimeEstimate(
+            code: '000171',
+            name: '易方达裕丰回报债券A',
+            prevNavDate: '2026-06-01',
+            prevNav: 2.08,
+            estNav: 2.1,
+            estChangePct: 0.49,
+            estTime: '2026-06-02 11:30',
+            previousTradingNavDate: '2026-05-29',
+            previousTradingNav: 2.09,
+          );
+
   final requestedCodes = <String>[];
+  final RealtimeEstimate _estimate;
 
   @override
   Future<RealtimeEstimate> fetchRealtimeEstimate(String code) async {
     requestedCodes.add(code);
-    return RealtimeEstimate(
-      code: code,
-      name: '易方达裕丰回报债券A',
-      prevNavDate: '2026-06-01',
-      prevNav: 2.08,
-      estNav: 2.1,
-      estChangePct: 0.49,
-      estTime: '2026-06-02 11:30',
-    );
+    return _estimate;
   }
 }
 
@@ -312,6 +387,7 @@ final class _FakeFundHoldingRepository implements FundHoldingRepository {
       shares: draft.shares,
       channel: draft.channel,
       purchaseNav: draft.purchaseNav,
+      fee: draft.fee,
     );
     _holdings.add(holding);
     return holding;
@@ -333,6 +409,7 @@ final class _FakeFundHoldingRepository implements FundHoldingRepository {
       shares: draft.shares,
       channel: draft.channel,
       purchaseNav: draft.purchaseNav,
+      fee: draft.fee,
     );
     _holdings[index] = holding;
     return holding;

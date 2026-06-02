@@ -13,20 +13,30 @@ void main() {
     () async {
       final dio = Dio();
       Uri? requestedUri;
+      Uri? historyUri;
       String? accept;
       String? userAgent;
       String? referer;
       dio.interceptors.add(
         QueuedInterceptorsWrapper(
           onRequest: (options, handler) {
-            requestedUri = options.uri;
-            accept = options.headers['Accept'] as String?;
-            userAgent = options.headers['User-Agent'] as String?;
-            referer = options.headers['Referer'] as String?;
-            final body =
-                'jsonpgz({"fundcode":"000171","name":"易方达裕丰回报债券A",'
-                '"jzrq":"2026-06-01","dwjz":"2.0820","gsz":"2.0922",'
-                '"gszzl":"0.49","gztime":"2026-06-02 11:30"});';
+            final isHistory = options.uri.host == 'api.fund.eastmoney.com';
+            if (isHistory) {
+              historyUri = options.uri;
+            } else {
+              requestedUri = options.uri;
+              accept = options.headers['Accept'] as String?;
+              userAgent = options.headers['User-Agent'] as String?;
+              referer = options.headers['Referer'] as String?;
+            }
+            final body = isHistory
+                ? '{"Data":{"LSJZList":['
+                      '{"FSRQ":"2026-06-01","DWJZ":"2.0820"},'
+                      '{"FSRQ":"2026-05-29","DWJZ":"2.0910"}'
+                      ']}}'
+                : 'jsonpgz({"fundcode":"000171","name":"易方达裕丰回报债券A",'
+                      '"jzrq":"2026-06-01","dwjz":"2.0820","gsz":"2.0922",'
+                      '"gszzl":"0.49","gztime":"2026-06-02 11:30"});';
             handler.resolve(
               Response<List<int>>(
                 requestOptions: options,
@@ -44,7 +54,10 @@ void main() {
 
       expect(estimate.code, '000171');
       expect(estimate.name, '易方达裕丰回报债券A');
+      expect(estimate.previousTradingNavDate, '2026-05-29');
+      expect(estimate.previousTradingNav, closeTo(2.0910, 1e-9));
       expect(requestedUri?.toString(), endsWith('/000171.js'));
+      expect(historyUri?.path, '/f10/lsjz');
       expect(accept, contains('application/javascript'));
       expect(userAgent, isNotEmpty);
       expect(referer, 'https://fund.eastmoney.com/000171.html');
@@ -88,13 +101,20 @@ void main() {
       dio.interceptors.add(
         QueuedInterceptorsWrapper(
           onRequest: (options, handler) {
-            requestedUri = options.uri;
-            accept = options.headers['Accept'] as String?;
-            referer = options.headers['Referer'] as String?;
-            final body =
-                'jsonpgz({"fundcode":"020262","name":"平安鑫惠90天持有债券A",'
-                '"jzrq":"2026-06-01","dwjz":"1.0785","gsz":"1.0785",'
-                '"gszzl":"0.00","gztime":"2026-06-02 15:00"});';
+            final isHistory = options.uri.host == 'api.fund.eastmoney.com';
+            if (!isHistory) {
+              requestedUri = options.uri;
+              accept = options.headers['Accept'] as String?;
+              referer = options.headers['Referer'] as String?;
+            }
+            final body = isHistory
+                ? '{"Data":{"LSJZList":['
+                      '{"FSRQ":"2026-06-01","DWJZ":"1.0785"},'
+                      '{"FSRQ":"2026-05-29","DWJZ":"1.0784"}'
+                      ']}}'
+                : 'jsonpgz({"fundcode":"020262","name":"平安鑫惠90天持有债券A",'
+                      '"jzrq":"2026-06-01","dwjz":"1.0785","gsz":"1.0785",'
+                      '"gszzl":"0.00","gztime":"2026-06-02 15:00"});';
             handler.resolve(
               Response<List<int>>(
                 requestOptions: options,

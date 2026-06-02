@@ -77,6 +77,16 @@ class $FundHoldingsTable extends FundHoldings
     type: DriftSqlType.double,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _feeMeta = const VerificationMeta('fee');
+  @override
+  late final GeneratedColumn<double> fee = GeneratedColumn<double>(
+    'fee',
+    aliasedName,
+    false,
+    type: DriftSqlType.double,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(0),
+  );
   static const VerificationMeta _createdAtMeta = const VerificationMeta(
     'createdAt',
   );
@@ -118,6 +128,7 @@ class $FundHoldingsTable extends FundHoldings
     shares,
     channel,
     purchaseNav,
+    fee,
     createdAt,
     updatedAt,
     deletedAt,
@@ -183,6 +194,12 @@ class $FundHoldingsTable extends FundHoldings
     } else if (isInserting) {
       context.missing(_purchaseNavMeta);
     }
+    if (data.containsKey('fee')) {
+      context.handle(
+        _feeMeta,
+        fee.isAcceptableOrUnknown(data['fee']!, _feeMeta),
+      );
+    }
     if (data.containsKey('created_at')) {
       context.handle(
         _createdAtMeta,
@@ -238,6 +255,10 @@ class $FundHoldingsTable extends FundHoldings
         DriftSqlType.double,
         data['${effectivePrefix}purchase_nav'],
       )!,
+      fee: attachedDatabase.typeMapping.read(
+        DriftSqlType.double,
+        data['${effectivePrefix}fee'],
+      )!,
       createdAt: attachedDatabase.typeMapping.read(
         DriftSqlType.dateTime,
         data['${effectivePrefix}created_at'],
@@ -266,6 +287,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
   final double shares;
   final String channel;
   final double purchaseNav;
+  final double fee;
   final DateTime createdAt;
   final DateTime updatedAt;
   final DateTime? deletedAt;
@@ -276,6 +298,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
     required this.shares,
     required this.channel,
     required this.purchaseNav,
+    required this.fee,
     required this.createdAt,
     required this.updatedAt,
     this.deletedAt,
@@ -289,6 +312,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
     map['shares'] = Variable<double>(shares);
     map['channel'] = Variable<String>(channel);
     map['purchase_nav'] = Variable<double>(purchaseNav);
+    map['fee'] = Variable<double>(fee);
     map['created_at'] = Variable<DateTime>(createdAt);
     map['updated_at'] = Variable<DateTime>(updatedAt);
     if (!nullToAbsent || deletedAt != null) {
@@ -305,6 +329,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
       shares: Value(shares),
       channel: Value(channel),
       purchaseNav: Value(purchaseNav),
+      fee: Value(fee),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
       deletedAt: deletedAt == null && nullToAbsent
@@ -325,6 +350,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
       shares: serializer.fromJson<double>(json['shares']),
       channel: serializer.fromJson<String>(json['channel']),
       purchaseNav: serializer.fromJson<double>(json['purchaseNav']),
+      fee: serializer.fromJson<double>(json['fee']),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
       deletedAt: serializer.fromJson<DateTime?>(json['deletedAt']),
@@ -340,6 +366,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
       'shares': serializer.toJson<double>(shares),
       'channel': serializer.toJson<String>(channel),
       'purchaseNav': serializer.toJson<double>(purchaseNav),
+      'fee': serializer.toJson<double>(fee),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
       'deletedAt': serializer.toJson<DateTime?>(deletedAt),
@@ -353,6 +380,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
     double? shares,
     String? channel,
     double? purchaseNav,
+    double? fee,
     DateTime? createdAt,
     DateTime? updatedAt,
     Value<DateTime?> deletedAt = const Value.absent(),
@@ -363,6 +391,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
     shares: shares ?? this.shares,
     channel: channel ?? this.channel,
     purchaseNav: purchaseNav ?? this.purchaseNav,
+    fee: fee ?? this.fee,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
     deletedAt: deletedAt.present ? deletedAt.value : this.deletedAt,
@@ -379,6 +408,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
       purchaseNav: data.purchaseNav.present
           ? data.purchaseNav.value
           : this.purchaseNav,
+      fee: data.fee.present ? data.fee.value : this.fee,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
       deletedAt: data.deletedAt.present ? data.deletedAt.value : this.deletedAt,
@@ -394,6 +424,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
           ..write('shares: $shares, ')
           ..write('channel: $channel, ')
           ..write('purchaseNav: $purchaseNav, ')
+          ..write('fee: $fee, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt')
@@ -409,6 +440,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
     shares,
     channel,
     purchaseNav,
+    fee,
     createdAt,
     updatedAt,
     deletedAt,
@@ -423,6 +455,7 @@ class FundHolding extends DataClass implements Insertable<FundHolding> {
           other.shares == this.shares &&
           other.channel == this.channel &&
           other.purchaseNav == this.purchaseNav &&
+          other.fee == this.fee &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt &&
           other.deletedAt == this.deletedAt);
@@ -435,6 +468,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
   final Value<double> shares;
   final Value<String> channel;
   final Value<double> purchaseNav;
+  final Value<double> fee;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<DateTime?> deletedAt;
@@ -445,6 +479,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
     this.shares = const Value.absent(),
     this.channel = const Value.absent(),
     this.purchaseNav = const Value.absent(),
+    this.fee = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.deletedAt = const Value.absent(),
@@ -456,6 +491,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
     required double shares,
     required String channel,
     required double purchaseNav,
+    this.fee = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.deletedAt = const Value.absent(),
@@ -473,6 +509,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
     Expression<double>? shares,
     Expression<String>? channel,
     Expression<double>? purchaseNav,
+    Expression<double>? fee,
     Expression<DateTime>? createdAt,
     Expression<DateTime>? updatedAt,
     Expression<DateTime>? deletedAt,
@@ -484,6 +521,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
       if (shares != null) 'shares': shares,
       if (channel != null) 'channel': channel,
       if (purchaseNav != null) 'purchase_nav': purchaseNav,
+      if (fee != null) 'fee': fee,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (deletedAt != null) 'deleted_at': deletedAt,
@@ -497,6 +535,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
     Value<double>? shares,
     Value<String>? channel,
     Value<double>? purchaseNav,
+    Value<double>? fee,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<DateTime?>? deletedAt,
@@ -508,6 +547,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
       shares: shares ?? this.shares,
       channel: channel ?? this.channel,
       purchaseNav: purchaseNav ?? this.purchaseNav,
+      fee: fee ?? this.fee,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       deletedAt: deletedAt ?? this.deletedAt,
@@ -535,6 +575,9 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
     if (purchaseNav.present) {
       map['purchase_nav'] = Variable<double>(purchaseNav.value);
     }
+    if (fee.present) {
+      map['fee'] = Variable<double>(fee.value);
+    }
     if (createdAt.present) {
       map['created_at'] = Variable<DateTime>(createdAt.value);
     }
@@ -556,6 +599,7 @@ class FundHoldingsCompanion extends UpdateCompanion<FundHolding> {
           ..write('shares: $shares, ')
           ..write('channel: $channel, ')
           ..write('purchaseNav: $purchaseNav, ')
+          ..write('fee: $fee, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('deletedAt: $deletedAt')
@@ -584,6 +628,7 @@ typedef $$FundHoldingsTableCreateCompanionBuilder =
       required double shares,
       required String channel,
       required double purchaseNav,
+      Value<double> fee,
       required DateTime createdAt,
       required DateTime updatedAt,
       Value<DateTime?> deletedAt,
@@ -596,6 +641,7 @@ typedef $$FundHoldingsTableUpdateCompanionBuilder =
       Value<double> shares,
       Value<String> channel,
       Value<double> purchaseNav,
+      Value<double> fee,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<DateTime?> deletedAt,
@@ -637,6 +683,11 @@ class $$FundHoldingsTableFilterComposer
 
   ColumnFilters<double> get purchaseNav => $composableBuilder(
     column: $table.purchaseNav,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<double> get fee => $composableBuilder(
+    column: $table.fee,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -695,6 +746,11 @@ class $$FundHoldingsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<double> get fee => $composableBuilder(
+    column: $table.fee,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<DateTime> get createdAt => $composableBuilder(
     column: $table.createdAt,
     builder: (column) => ColumnOrderings(column),
@@ -741,6 +797,9 @@ class $$FundHoldingsTableAnnotationComposer
     column: $table.purchaseNav,
     builder: (column) => column,
   );
+
+  GeneratedColumn<double> get fee =>
+      $composableBuilder(column: $table.fee, builder: (column) => column);
 
   GeneratedColumn<DateTime> get createdAt =>
       $composableBuilder(column: $table.createdAt, builder: (column) => column);
@@ -795,6 +854,7 @@ class $$FundHoldingsTableTableManager
                 Value<double> shares = const Value.absent(),
                 Value<String> channel = const Value.absent(),
                 Value<double> purchaseNav = const Value.absent(),
+                Value<double> fee = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -805,6 +865,7 @@ class $$FundHoldingsTableTableManager
                 shares: shares,
                 channel: channel,
                 purchaseNav: purchaseNav,
+                fee: fee,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,
@@ -817,6 +878,7 @@ class $$FundHoldingsTableTableManager
                 required double shares,
                 required String channel,
                 required double purchaseNav,
+                Value<double> fee = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<DateTime?> deletedAt = const Value.absent(),
@@ -827,6 +889,7 @@ class $$FundHoldingsTableTableManager
                 shares: shares,
                 channel: channel,
                 purchaseNav: purchaseNav,
+                fee: fee,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 deletedAt: deletedAt,
