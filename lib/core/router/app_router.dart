@@ -2,6 +2,7 @@ import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:talker_flutter/talker_flutter.dart';
 
+import '../../features/fund/presentation/pages/fund_holding_estimate_page.dart';
 import '../../features/news/presentation/pages/news_detail_page.dart';
 import '../../features/news/presentation/pages/news_list_page.dart';
 import '../log/talker.dart';
@@ -16,9 +17,13 @@ part 'app_router.g.dart';
 @Riverpod(keepAlive: true)
 GoRouter appRouter(Ref ref) {
   return GoRouter(
-    // 应用启动后默认进入新闻列表页。
-    initialLocation: AppRoutes.news,
+    // 应用启动后默认进入基金收益估算页。
+    initialLocation: AppRoutes.fundHoldingEstimate,
     routes: [
+      GoRoute(
+        path: AppRoutes.fundHoldingEstimate,
+        builder: (_, _) => const FundHoldingEstimatePage(),
+      ),
       // /news -> 新闻列表页
       GoRoute(path: AppRoutes.news, builder: (_, _) => const NewsListPage()),
       // /news/:id -> 新闻详情页

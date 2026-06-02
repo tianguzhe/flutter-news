@@ -5,6 +5,8 @@ class AppRoutes {
   /// 新闻列表页真实路径。
   static const news = '/news';
 
+  static const fundHoldingEstimate = '/fund/holding-estimate';
+
   /// 新闻详情页路由模板，`:id` 是路径参数占位符。
   static const newsDetail = '/news/:id';
 

@@ -1,0 +1,881 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import '../../data/repositories/fund_estimate_repository_provider.dart';
+import '../../domain/fund_holding_estimate.dart';
+
+class FundHoldingEstimatePage extends ConsumerStatefulWidget {
+  const FundHoldingEstimatePage({super.key});
+
+  @override
+  ConsumerState<FundHoldingEstimatePage> createState() =>
+      _FundHoldingEstimatePageState();
+}
+
+class _FundHoldingEstimatePageState
+    extends ConsumerState<FundHoldingEstimatePage> {
+  final _formKey = GlobalKey<FormState>();
+  final _codeController = TextEditingController();
+  final _sharesController = TextEditingController();
+  final _channelController = TextEditingController();
+  final _purchaseNavController = TextEditingController();
+
+  DateTime? _purchaseDate;
+  var _nextHoldingId = 1;
+  final _holdings = <FundHoldingInput>[];
+  final _holdingStates = <int, AsyncValue<FundHoldingEstimate>>{};
+
+  bool get _isLoading => _holdingStates.values.any((state) => state.isLoading);
+
+  @override
+  void dispose() {
+    _codeController.dispose();
+    _sharesController.dispose();
+    _channelController.dispose();
+    _purchaseNavController.dispose();
+    super.dispose();
+  }
+
+  Future<void> _pickPurchaseDate() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _purchaseDate ?? now,
+      firstDate: DateTime(1990),
+      lastDate: now,
+    );
+    if (picked == null) {
+      return;
+    }
+    setState(() => _purchaseDate = picked);
+  }
+
+  Future<void> _addHolding() async {
+    if (!_formKey.currentState!.validate()) {
+      return;
+    }
+    if (_purchaseDate == null) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('请选择购买时间')));
+      return;
+    }
+
+    final input = FundHoldingInput(
+      id: _nextHoldingId++,
+      code: _codeController.text.trim(),
+      purchaseDate: _purchaseDate!,
+      shares: double.parse(_sharesController.text.trim()),
+      channel: _channelController.text.trim(),
+      purchaseNav: double.parse(_purchaseNavController.text.trim()),
+    );
+
+    setState(() {
+      _holdings.add(input);
+      _holdingStates[input.id] = const AsyncLoading();
+    });
+    _clearEntryForm();
+    await _refreshHolding(input);
+  }
+
+  Future<void> _refreshHolding(FundHoldingInput input) async {
+    setState(() => _holdingStates[input.id] = const AsyncLoading());
+    final result = await AsyncValue.guard(() async {
+      final realtimeEstimate = await ref
+          .read(fundEstimateRepositoryProvider)
+          .fetchRealtimeEstimate(input.code);
+      return calculateFundHoldingEstimate(
+        input: input,
+        realtimeEstimate: realtimeEstimate,
+      );
+    });
+    if (!mounted) {
+      return;
+    }
+    setState(() => _holdingStates[input.id] = result);
+  }
+
+  void _clearEntryForm() {
+    _codeController.clear();
+    _sharesController.clear();
+    _channelController.clear();
+    _purchaseNavController.clear();
+    _purchaseDate = null;
+  }
+
+  void _removeHolding(FundHoldingInput input) {
+    setState(() {
+      _holdings.removeWhere((holding) => holding.id == input.id);
+      _holdingStates.remove(input.id);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('基金收益估算'), centerTitle: false),
+      body: SafeArea(
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 28),
+          children: [
+            _InputSection(
+              formKey: _formKey,
+              codeController: _codeController,
+              sharesController: _sharesController,
+              channelController: _channelController,
+              purchaseNavController: _purchaseNavController,
+              purchaseDate: _purchaseDate,
+              onPickPurchaseDate: _pickPurchaseDate,
+              onSubmit: _addHolding,
+              isLoading: _isLoading,
+            ),
+            const SizedBox(height: 16),
+            _HoldingsByChannelSection(
+              holdings: _holdings,
+              states: _holdingStates,
+              onRefresh: _refreshHolding,
+              onRemove: _removeHolding,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InputSection extends StatelessWidget {
+  const _InputSection({
+    required this.formKey,
+    required this.codeController,
+    required this.sharesController,
+    required this.channelController,
+    required this.purchaseNavController,
+    required this.purchaseDate,
+    required this.onPickPurchaseDate,
+    required this.onSubmit,
+    required this.isLoading,
+  });
+
+  final GlobalKey<FormState> formKey;
+  final TextEditingController codeController;
+  final TextEditingController sharesController;
+  final TextEditingController channelController;
+  final TextEditingController purchaseNavController;
+  final DateTime? purchaseDate;
+  final VoidCallback onPickPurchaseDate;
+  final VoidCallback onSubmit;
+  final bool isLoading;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Form(
+          key: formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text('新增持仓', style: Theme.of(context).textTheme.titleMedium),
+              const SizedBox(height: 16),
+              TextFormField(
+                controller: codeController,
+                decoration: const InputDecoration(
+                  labelText: '基金代码',
+                  hintText: '例如 000171',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: TextInputType.number,
+                maxLength: 6,
+                inputFormatters: [
+                  FilteringTextInputFormatter.digitsOnly,
+                  LengthLimitingTextInputFormatter(6),
+                ],
+                validator: _validateFundCode,
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
+                onPressed: onPickPurchaseDate,
+                icon: const Icon(Icons.calendar_month),
+                label: Text(
+                  purchaseDate == null
+                      ? '选择购买时间'
+                      : '购买时间 ${_formatDate(purchaseDate!)}',
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: sharesController,
+                decoration: const InputDecoration(
+                  labelText: '份额',
+                  hintText: '例如 1000.00',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [_DecimalTextInputFormatter()],
+                validator: (value) => _validatePositiveNumber(value, '请输入份额'),
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: channelController,
+                decoration: const InputDecoration(
+                  labelText: '渠道',
+                  hintText: '例如 支付宝 / 天天基金 / 银行',
+                  border: OutlineInputBorder(),
+                ),
+                validator: (value) =>
+                    value == null || value.trim().isEmpty ? '请输入渠道' : null,
+              ),
+              const SizedBox(height: 12),
+              TextFormField(
+                controller: purchaseNavController,
+                decoration: const InputDecoration(
+                  labelText: '购买时净值',
+                  hintText: '例如 2.0820',
+                  border: OutlineInputBorder(),
+                ),
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                inputFormatters: [_DecimalTextInputFormatter()],
+                validator: (value) =>
+                    _validatePositiveNumber(value, '请输入购买时净值'),
+              ),
+              const SizedBox(height: 16),
+              FilledButton.icon(
+                onPressed: isLoading ? null : onSubmit,
+                icon: const Icon(Icons.add),
+                label: const Text('添加并计算'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HoldingsByChannelSection extends StatelessWidget {
+  const _HoldingsByChannelSection({
+    required this.holdings,
+    required this.states,
+    required this.onRefresh,
+    required this.onRemove,
+  });
+
+  final List<FundHoldingInput> holdings;
+  final Map<int, AsyncValue<FundHoldingEstimate>> states;
+  final ValueChanged<FundHoldingInput> onRefresh;
+  final ValueChanged<FundHoldingInput> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    if (holdings.isEmpty) {
+      return const _StatePanel(
+        icon: Icons.insights,
+        title: '按渠道展示持仓',
+        message: '添加后会按渠道分组；同一基金不同购买时间会分别计算。',
+      );
+    }
+
+    final grouped = <String, List<FundHoldingInput>>{};
+    for (final holding in holdings) {
+      grouped.putIfAbsent(holding.channel, () => []).add(holding);
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: grouped.entries.map((entry) {
+        final channelHoldings = entry.value
+          ..sort((a, b) => a.purchaseDate.compareTo(b.purchaseDate));
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _ChannelGroupCard(
+            channel: entry.key,
+            holdings: channelHoldings,
+            states: states,
+            onRefresh: onRefresh,
+            onRemove: onRemove,
+          ),
+        );
+      }).toList(),
+    );
+  }
+}
+
+class _ChannelGroupCard extends StatelessWidget {
+  const _ChannelGroupCard({
+    required this.channel,
+    required this.holdings,
+    required this.states,
+    required this.onRefresh,
+    required this.onRemove,
+  });
+
+  final String channel;
+  final List<FundHoldingInput> holdings;
+  final Map<int, AsyncValue<FundHoldingEstimate>> states;
+  final ValueChanged<FundHoldingInput> onRefresh;
+  final ValueChanged<FundHoldingInput> onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final estimates = holdings
+        .map((holding) => states[holding.id])
+        .whereType<AsyncData<FundHoldingEstimate>>()
+        .map((state) => state.value)
+        .toList();
+    final totalCost = estimates.fold<double>(0, (sum, item) => sum + item.cost);
+    final totalValue = estimates.fold<double>(
+      0,
+      (sum, item) => sum + item.estimatedValue,
+    );
+    final totalReturn = totalValue - totalCost;
+    final totalRate = totalCost == 0 ? 0.0 : totalReturn / totalCost;
+
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  Icons.account_balance_wallet,
+                  color: Theme.of(context).colorScheme.primary,
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    channel,
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Text('${holdings.length} 笔'),
+              ],
+            ),
+            if (estimates.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              _ChannelSummary(
+                totalCost: totalCost,
+                totalValue: totalValue,
+                totalReturn: totalReturn,
+                totalRate: totalRate,
+              ),
+            ],
+            const SizedBox(height: 12),
+            for (final holding in holdings) ...[
+              _HoldingCard(
+                holding: holding,
+                state: states[holding.id] ?? const AsyncLoading(),
+                onRefresh: () => onRefresh(holding),
+                onRemove: () => onRemove(holding),
+              ),
+              if (holding != holdings.last) const SizedBox(height: 10),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ChannelSummary extends StatelessWidget {
+  const _ChannelSummary({
+    required this.totalCost,
+    required this.totalValue,
+    required this.totalReturn,
+    required this.totalRate,
+  });
+
+  final double totalCost;
+  final double totalValue;
+  final double totalReturn;
+  final double totalRate;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = totalReturn >= 0
+        ? Colors.red.shade700
+        : Colors.green.shade700;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Row(
+          children: [
+            Expanded(
+              child: _SummaryText(
+                label: '渠道总市值',
+                value: _formatMoney(totalValue),
+              ),
+            ),
+            Expanded(
+              child: _SummaryText(
+                label: '渠道成本',
+                value: _formatMoney(totalCost),
+              ),
+            ),
+            Expanded(
+              child: _SummaryText(
+                label: '渠道收益',
+                value:
+                    '${_formatSignedMoney(totalReturn)} / ${_formatPercent(totalRate)}',
+                valueColor: color,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SummaryText extends StatelessWidget {
+  const _SummaryText({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final Color? valueColor;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          value,
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            color: valueColor,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HoldingCard extends StatelessWidget {
+  const _HoldingCard({
+    required this.holding,
+    required this.state,
+    required this.onRefresh,
+    required this.onRemove,
+  });
+
+  final FundHoldingInput holding;
+  final AsyncValue<FundHoldingEstimate> state;
+  final VoidCallback onRefresh;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Theme.of(context).colorScheme.surface,
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: state.when(
+          loading: () => _HoldingLoading(holding: holding),
+          error: (error, _) => _HoldingError(
+            holding: holding,
+            message: error.toString(),
+            onRefresh: onRefresh,
+            onRemove: onRemove,
+          ),
+          data: (estimate) => _HoldingEstimateResult(
+            estimate: estimate,
+            onRefresh: onRefresh,
+            onRemove: onRemove,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HoldingEstimateResult extends StatelessWidget {
+  const _HoldingEstimateResult({
+    required this.estimate,
+    required this.onRefresh,
+    required this.onRemove,
+  });
+
+  final FundHoldingEstimate estimate;
+  final VoidCallback onRefresh;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = estimate.isProfitable
+        ? Colors.red.shade700
+        : Colors.green.shade700;
+    final realtime = estimate.realtimeEstimate;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _HoldingHeader(
+          title: '${realtime.name} (${realtime.code})',
+          subtitle: '买入日 ${_formatDate(estimate.input.purchaseDate)}',
+          onRefresh: onRefresh,
+          onRemove: onRemove,
+        ),
+        const SizedBox(height: 12),
+        Text(
+          _formatSignedMoney(estimate.totalReturn),
+          style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        Text(
+          '总收益 ${_formatPercent(estimate.totalReturnRate)}',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 12),
+        _MetricGrid(
+          items: [
+            _MetricItem('今日估算净值', _formatNumber(realtime.estNav, 4)),
+            _MetricItem('估值涨跌幅', _formatSignedPercent(realtime.estChangePct)),
+            _MetricItem('估算市值', _formatMoney(estimate.estimatedValue)),
+            _MetricItem('持仓成本', _formatMoney(estimate.cost)),
+            _MetricItem('购买净值', _formatNumber(estimate.input.purchaseNav, 4)),
+            _MetricItem('持有份额', _formatNumber(estimate.input.shares, 2)),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          '估值时间 ${realtime.estTime} · 昨日净值 ${_formatNumber(realtime.prevNav, 4)} (${realtime.prevNavDate})',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HoldingLoading extends StatelessWidget {
+  const _HoldingLoading({required this.holding});
+
+  final FundHoldingInput holding;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        const SizedBox(
+          width: 18,
+          height: 18,
+          child: CircularProgressIndicator(strokeWidth: 2),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Text(
+            '${holding.code} · ${_formatDate(holding.purchaseDate)} 正在估算',
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _HoldingError extends StatelessWidget {
+  const _HoldingError({
+    required this.holding,
+    required this.message,
+    required this.onRefresh,
+    required this.onRemove,
+  });
+
+  final FundHoldingInput holding;
+  final String message;
+  final VoidCallback onRefresh;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _HoldingHeader(
+          title: holding.code,
+          subtitle: '买入日 ${_formatDate(holding.purchaseDate)}',
+          onRefresh: onRefresh,
+          onRemove: onRemove,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          message,
+          style: TextStyle(color: Theme.of(context).colorScheme.error),
+        ),
+      ],
+    );
+  }
+}
+
+class _HoldingHeader extends StatelessWidget {
+  const _HoldingHeader({
+    required this.title,
+    required this.subtitle,
+    required this.onRefresh,
+    required this.onRemove,
+  });
+
+  final String title;
+  final String subtitle;
+  final VoidCallback onRefresh;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                title,
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                subtitle,
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(context).colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          onPressed: onRefresh,
+          tooltip: '刷新估值',
+          icon: const Icon(Icons.refresh),
+        ),
+        IconButton(
+          onPressed: onRemove,
+          tooltip: '删除持仓',
+          icon: const Icon(Icons.delete_outline),
+        ),
+      ],
+    );
+  }
+}
+
+class _MetricGrid extends StatelessWidget {
+  const _MetricGrid({required this.items});
+
+  final List<_MetricItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 520 ? 3 : 2;
+        return GridView.builder(
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: items.length,
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisSpacing: 8,
+            crossAxisSpacing: 8,
+            childAspectRatio: columns == 3 ? 2.8 : 2.2,
+          ),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return DecoratedBox(
+              decoration: BoxDecoration(
+                color: Theme.of(context).colorScheme.surfaceContainerHighest,
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Padding(
+                padding: const EdgeInsets.all(10),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Text(
+                      item.label,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      item.value,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+}
+
+class _MetricItem {
+  const _MetricItem(this.label, this.value);
+
+  final String label;
+  final String value;
+}
+
+class _StatePanel extends StatelessWidget {
+  const _StatePanel({
+    required this.icon,
+    required this.title,
+    required this.message,
+  });
+
+  final IconData icon;
+  final String title;
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        border: Border.all(color: Theme.of(context).colorScheme.outlineVariant),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(icon, color: Theme.of(context).colorScheme.primary),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(title, style: Theme.of(context).textTheme.titleSmall),
+                  const SizedBox(height: 4),
+                  Text(
+                    message,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DecimalTextInputFormatter extends TextInputFormatter {
+  static final _pattern = RegExp(r'^\d*\.?\d*$');
+
+  @override
+  TextEditingValue formatEditUpdate(
+    TextEditingValue oldValue,
+    TextEditingValue newValue,
+  ) {
+    return _pattern.hasMatch(newValue.text) ? newValue : oldValue;
+  }
+}
+
+String? _validateFundCode(String? value) {
+  final text = value?.trim() ?? '';
+  if (!RegExp(r'^\d{6}$').hasMatch(text)) {
+    return '请输入 6 位基金代码';
+  }
+  return null;
+}
+
+String? _validatePositiveNumber(String? value, String emptyMessage) {
+  final text = value?.trim() ?? '';
+  if (text.isEmpty) {
+    return emptyMessage;
+  }
+  final number = double.tryParse(text);
+  if (number == null || number <= 0) {
+    return '请输入大于 0 的数字';
+  }
+  return null;
+}
+
+String _formatDate(DateTime value) {
+  final year = value.year.toString().padLeft(4, '0');
+  final month = value.month.toString().padLeft(2, '0');
+  final day = value.day.toString().padLeft(2, '0');
+  return '$year-$month-$day';
+}
+
+String _formatMoney(double value) {
+  return value.toStringAsFixed(2);
+}
+
+String _formatSignedMoney(double value) {
+  final sign = value > 0 ? '+' : '';
+  return '$sign${value.toStringAsFixed(2)}';
+}
+
+String _formatPercent(double value) {
+  final sign = value > 0 ? '+' : '';
+  return '$sign${(value * 100).toStringAsFixed(2)}%';
+}
+
+String _formatSignedPercent(double value) {
+  final sign = value > 0 ? '+' : '';
+  return '$sign${value.toStringAsFixed(2)}%';
+}
+
+String _formatNumber(double value, int fractionDigits) {
+  return value.toStringAsFixed(fractionDigits);
+}

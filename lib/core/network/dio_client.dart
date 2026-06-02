@@ -2,8 +2,9 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart';
 import 'package:talker_dio_logger/talker_dio_logger_interceptor.dart';
 import 'package:talker_dio_logger/talker_dio_logger_settings.dart';
-import 'package:untitled/core/log/talker.dart';
-import 'package:untitled/core/network/interceptor/header_interceptors.dart';
+
+import '../log/talker.dart';
+import 'interceptor/header_interceptors.dart';
 
 /// Dio 工厂：
 /// 统一创建 HTTP 客户端，集中管理超时、基础地址与默认请求头。

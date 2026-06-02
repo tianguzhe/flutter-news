@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/experimental/scope.dart';
-import 'package:untitled/core/log/log.dart';
 
+import '../../../../core/log/log.dart';
 import '../../../../core/router/app_routes.dart';
 import '../view_models/news_list_view_model.dart';
 import '../widgets/news_card.dart';
