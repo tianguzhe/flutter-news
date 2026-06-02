@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../models/news_article.dart';
+import '../../data/models/news_article.dart';
 import 'news_cover.dart';
 
 /// 新闻卡片：在列表中展示标题、摘要、来源与封面。

@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'news_detail_provider.dart';
+part of 'news_detail_view_model.dart';
 
 // **************************************************************************
 // RiverpodGenerator
@@ -10,12 +10,12 @@ part of 'news_detail_provider.dart';
 // ignore_for_file: type=lint, type=warning
 /// 详情 Provider：按新闻 id 拉取单篇文章。
 
-@ProviderFor(newsDetail)
-final newsDetailProvider = NewsDetailFamily._();
+@ProviderFor(newsDetailViewModel)
+final newsDetailViewModelProvider = NewsDetailViewModelFamily._();
 
 /// 详情 Provider：按新闻 id 拉取单篇文章。
 
-final class NewsDetailProvider
+final class NewsDetailViewModelProvider
     extends
         $FunctionalProvider<
           AsyncValue<NewsArticle>,
@@ -24,25 +24,23 @@ final class NewsDetailProvider
         >
     with $FutureModifier<NewsArticle>, $FutureProvider<NewsArticle> {
   /// 详情 Provider：按新闻 id 拉取单篇文章。
-  NewsDetailProvider._({
-    required NewsDetailFamily super.from,
+  NewsDetailViewModelProvider._({
+    required NewsDetailViewModelFamily super.from,
     required String super.argument,
   }) : super(
          retry: null,
-         name: r'newsDetailProvider',
+         name: r'newsDetailViewModelProvider',
          isAutoDispose: true,
          dependencies: null,
          $allTransitiveDependencies: null,
        );
 
-  static final $allTransitiveDependencies0 = newsApiProvider;
-
   @override
-  String debugGetCreateSourceHash() => _$newsDetailHash();
+  String debugGetCreateSourceHash() => _$newsDetailViewModelHash();
 
   @override
   String toString() {
-    return r'newsDetailProvider'
+    return r'newsDetailViewModelProvider'
         ''
         '($argument)';
   }
@@ -56,12 +54,12 @@ final class NewsDetailProvider
   @override
   FutureOr<NewsArticle> create(Ref ref) {
     final argument = this.argument as String;
-    return newsDetail(ref, argument);
+    return newsDetailViewModel(ref, argument);
   }
 
   @override
   bool operator ==(Object other) {
-    return other is NewsDetailProvider && other.argument == argument;
+    return other is NewsDetailViewModelProvider && other.argument == argument;
   }
 
   @override
@@ -70,28 +68,27 @@ final class NewsDetailProvider
   }
 }
 
-String _$newsDetailHash() => r'db4d56e59c0186588bd58ca56a369826708c6d9a';
+String _$newsDetailViewModelHash() =>
+    r'4c2da49d673e804988356dada58aabca6c9a0439';
 
 /// 详情 Provider：按新闻 id 拉取单篇文章。
 
-final class NewsDetailFamily extends $Family
+final class NewsDetailViewModelFamily extends $Family
     with $FunctionalFamilyOverride<FutureOr<NewsArticle>, String> {
-  NewsDetailFamily._()
+  NewsDetailViewModelFamily._()
     : super(
         retry: null,
-        name: r'newsDetailProvider',
-        dependencies: <ProviderOrFamily>[newsApiProvider],
-        $allTransitiveDependencies: <ProviderOrFamily>[
-          NewsDetailProvider.$allTransitiveDependencies0,
-        ],
+        name: r'newsDetailViewModelProvider',
+        dependencies: null,
+        $allTransitiveDependencies: null,
         isAutoDispose: true,
       );
 
   /// 详情 Provider：按新闻 id 拉取单篇文章。
 
-  NewsDetailProvider call(String id) =>
-      NewsDetailProvider._(argument: id, from: this);
+  NewsDetailViewModelProvider call(String id) =>
+      NewsDetailViewModelProvider._(argument: id, from: this);
 
   @override
-  String toString() => r'newsDetailProvider';
+  String toString() => r'newsDetailViewModelProvider';
 }

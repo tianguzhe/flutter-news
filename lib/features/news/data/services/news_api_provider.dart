@@ -1,7 +1,7 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
-import '../../../core/providers/dio_provider.dart';
-import '../api/news_api.dart';
+import '../../../../core/providers/dio_provider.dart';
+import 'news_api.dart';
 
 part 'news_api_provider.g.dart';
 

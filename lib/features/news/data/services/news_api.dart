@@ -1,7 +1,7 @@
 import 'package:dio/dio.dart';
 
-import '../../../core/network/api_exception.dart';
-import '../../../core/network/error_mapper.dart';
+import '../../../../core/network/api_exception.dart';
+import '../../../../core/network/error_mapper.dart';
 import '../models/news_article.dart';
 import '../models/news_page.dart';
 

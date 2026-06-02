@@ -1,9 +1,9 @@
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 
-import '../models/news_article.dart';
-import 'news_api_provider.dart';
+import '../../data/models/news_article.dart';
+import '../../data/repositories/news_repository_provider.dart';
 
-part 'news_list_provider.g.dart';
+part 'news_list_view_model.g.dart';
 
 /// 可选新闻分类，供列表页分类条渲染。
 const newsCategories = <String>[
@@ -18,7 +18,7 @@ const newsCategories = <String>[
 
 @Riverpod()
 /// 列表状态控制器：管理分类切换、刷新与列表请求。
-class NewsList extends _$NewsList {
+class NewsListViewModel extends _$NewsListViewModel {
   final String _query = 'ai';
   String _category = 'technology';
 
@@ -46,7 +46,7 @@ class NewsList extends _$NewsList {
   Future<List<NewsArticle>> _load() async {
     // 可扩展：后续若接入分页，可在这里返回合并后的列表。
     final page = await ref
-        .read(newsApiProvider)
+        .read(newsRepositoryProvider)
         .fetchLatest(query: _query, category: _category);
     return page.articles;
   }
@@ -56,6 +56,6 @@ class NewsList extends _$NewsList {
 /// 当前选中的新闻分类：给 UI 读取高亮状态，避免直接暴露 Notifier getter。
 String selectedNewsCategory(Ref ref) {
   // 订阅列表状态，分类切换触发 refresh 后这里会同步重算。
-  ref.watch(newsListProvider);
-  return ref.read(newsListProvider.notifier)._category;
+  ref.watch(newsListViewModelProvider);
+  return ref.read(newsListViewModelProvider.notifier)._category;
 }

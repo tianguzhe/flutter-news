@@ -2,7 +2,8 @@ import 'news_article.dart';
 
 /// 新闻分页结果：当前页文章 + 下一页游标。
 class NewsPage {
-  const NewsPage({required this.articles, this.nextPage});
+  NewsPage({required List<NewsArticle> articles, this.nextPage})
+    : articles = List.unmodifiable(articles);
 
   /// 当前页文章列表。
   final List<NewsArticle> articles;

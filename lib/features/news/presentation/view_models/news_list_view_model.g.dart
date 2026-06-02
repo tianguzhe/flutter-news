@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'news_list_provider.dart';
+part of 'news_list_view_model.dart';
 
 // **************************************************************************
 // RiverpodGenerator
@@ -10,41 +10,37 @@ part of 'news_list_provider.dart';
 // ignore_for_file: type=lint, type=warning
 /// 列表状态控制器：管理分类切换、刷新与列表请求。
 
-@ProviderFor(NewsList)
-final newsListProvider = NewsListProvider._();
+@ProviderFor(NewsListViewModel)
+final newsListViewModelProvider = NewsListViewModelProvider._();
 
 /// 列表状态控制器：管理分类切换、刷新与列表请求。
-final class NewsListProvider
-    extends $AsyncNotifierProvider<NewsList, List<NewsArticle>> {
+final class NewsListViewModelProvider
+    extends $AsyncNotifierProvider<NewsListViewModel, List<NewsArticle>> {
   /// 列表状态控制器：管理分类切换、刷新与列表请求。
-  NewsListProvider._()
+  NewsListViewModelProvider._()
     : super(
         from: null,
         argument: null,
         retry: null,
-        name: r'newsListProvider',
+        name: r'newsListViewModelProvider',
         isAutoDispose: true,
-        dependencies: <ProviderOrFamily>[newsApiProvider],
-        $allTransitiveDependencies: <ProviderOrFamily>[
-          NewsListProvider.$allTransitiveDependencies0,
-        ],
+        dependencies: null,
+        $allTransitiveDependencies: null,
       );
 
-  static final $allTransitiveDependencies0 = newsApiProvider;
-
   @override
-  String debugGetCreateSourceHash() => _$newsListHash();
+  String debugGetCreateSourceHash() => _$newsListViewModelHash();
 
   @$internal
   @override
-  NewsList create() => NewsList();
+  NewsListViewModel create() => NewsListViewModel();
 }
 
-String _$newsListHash() => r'baab7a999af7c80efc2a68ac1c429bc174749f1d';
+String _$newsListViewModelHash() => r'54137d75c26714971f2dfcfc4f392b4c027c69c1';
 
 /// 列表状态控制器：管理分类切换、刷新与列表请求。
 
-abstract class _$NewsList extends $AsyncNotifier<List<NewsArticle>> {
+abstract class _$NewsListViewModel extends $AsyncNotifier<List<NewsArticle>> {
   FutureOr<List<NewsArticle>> build();
   @$mustCallSuper
   @override
@@ -81,16 +77,9 @@ final class SelectedNewsCategoryProvider
         retry: null,
         name: r'selectedNewsCategoryProvider',
         isAutoDispose: true,
-        dependencies: <ProviderOrFamily>[newsListProvider],
-        $allTransitiveDependencies: <ProviderOrFamily>[
-          SelectedNewsCategoryProvider.$allTransitiveDependencies0,
-          SelectedNewsCategoryProvider.$allTransitiveDependencies1,
-        ],
+        dependencies: null,
+        $allTransitiveDependencies: null,
       );
-
-  static final $allTransitiveDependencies0 = newsListProvider;
-  static final $allTransitiveDependencies1 =
-      NewsListProvider.$allTransitiveDependencies0;
 
   @override
   String debugGetCreateSourceHash() => _$selectedNewsCategoryHash();
@@ -115,4 +104,4 @@ final class SelectedNewsCategoryProvider
 }
 
 String _$selectedNewsCategoryHash() =>
-    r'2511211e39a897caee612c8a69b04816f3b1c654';
+    r'1e6c74f9dfcbb3cd0e54794cc37d830fd1ee4c4c';

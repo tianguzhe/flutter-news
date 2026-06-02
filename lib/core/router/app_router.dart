@@ -2,10 +2,8 @@ import 'package:go_router/go_router.dart';
 import 'package:riverpod_annotation/riverpod_annotation.dart';
 import 'package:talker_flutter/talker_flutter.dart';
 
-import '../../features/news/pages/news_detail_page.dart';
-import '../../features/news/pages/news_list_page.dart';
-import '../../features/news/providers/news_detail_provider.dart';
-import '../../features/news/providers/news_list_provider.dart';
+import '../../features/news/presentation/pages/news_detail_page.dart';
+import '../../features/news/presentation/pages/news_list_page.dart';
 import '../log/talker.dart';
 import 'app_routes.dart';
 
@@ -15,10 +13,7 @@ part 'app_router.g.dart';
 /// 应用级路由 Provider。
 ///
 /// keepAlive 表示这个路由对象在应用运行期间保持稳定。
-@Riverpod(
-  keepAlive: true,
-  dependencies: [NewsList, selectedNewsCategory, newsDetail],
-)
+@Riverpod(keepAlive: true)
 GoRouter appRouter(Ref ref) {
   return GoRouter(
     // 应用启动后默认进入新闻列表页。

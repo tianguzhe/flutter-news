@@ -32,24 +32,9 @@ final class AppRouterProvider
         retry: null,
         name: r'appRouterProvider',
         isAutoDispose: false,
-        dependencies: <ProviderOrFamily>[
-          newsListProvider,
-          selectedNewsCategoryProvider,
-          newsDetailProvider,
-        ],
-        $allTransitiveDependencies: <ProviderOrFamily>{
-          AppRouterProvider.$allTransitiveDependencies0,
-          AppRouterProvider.$allTransitiveDependencies1,
-          AppRouterProvider.$allTransitiveDependencies2,
-          AppRouterProvider.$allTransitiveDependencies3,
-        },
+        dependencies: null,
+        $allTransitiveDependencies: null,
       );
-
-  static final $allTransitiveDependencies0 = newsListProvider;
-  static final $allTransitiveDependencies1 =
-      NewsListProvider.$allTransitiveDependencies0;
-  static final $allTransitiveDependencies2 = selectedNewsCategoryProvider;
-  static final $allTransitiveDependencies3 = newsDetailProvider;
 
   @override
   String debugGetCreateSourceHash() => _$appRouterHash();
@@ -73,4 +58,4 @@ final class AppRouterProvider
   }
 }
 
-String _$appRouterHash() => r'9960dfb328321b9357711f797116291a8f629541';
+String _$appRouterHash() => r'e18175873167a7b81ecaef0026bfcd6147a7b8c5';
