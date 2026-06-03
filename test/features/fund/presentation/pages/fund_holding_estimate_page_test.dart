@@ -47,23 +47,24 @@ void main() {
       );
 
       expect(find.text('支付宝'), findsOneWidget);
-      expect(find.text('2 笔'), findsOneWidget);
+      expect(find.textContaining('2 笔'), findsAtLeastNWidgets(1));
       expect(find.text('组合概览'), findsOneWidget);
-      expect(find.text('易方达裕丰回报债券A (000171)'), findsNWidgets(2));
-      expect(find.textContaining('买入日'), findsNWidgets(2));
-      expect(find.text('-10.00'), findsAtLeastNWidgets(1));
-      expect(find.text('-5.00'), findsAtLeastNWidgets(1));
+      expect(find.text('易方达裕丰回报债券A'), findsNWidgets(2));
+      expect(find.text('000171'), findsAtLeastNWidgets(2));
+      expect(find.textContaining('成本 '), findsAtLeastNWidgets(2));
       expect(find.text('昨日资产变动'), findsAtLeastNWidgets(1));
-      expect(find.text('今日预估收益'), findsAtLeastNWidgets(1));
-      expect(find.text('累计到昨日收益'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('+4.00%'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('+1.46%'), findsAtLeastNWidgets(1));
-      expect(find.text('+20.00'), findsAtLeastNWidgets(1));
-      expect(find.text('+10.00'), findsAtLeastNWidgets(1));
-      expect(find.text('2.1000'), findsNWidgets(2));
-      expect(find.text('2100.00'), findsOneWidget);
+      expect(find.textContaining('+20.00'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+10.00'), findsAtLeastNWidgets(1));
       expect(find.text('-15.00'), findsAtLeastNWidgets(1));
       expect(find.textContaining('+95.00'), findsAtLeastNWidgets(1));
+
+      await _openFirstHoldingDetail(tester);
+
+      expect(find.text('今日预估收益'), findsAtLeastNWidgets(1));
+      expect(find.text('累计收益'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+4.00%'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('2.1000'), findsAtLeastNWidgets(1));
+      expect(find.text('2100.00'), findsOneWidget);
       expect(await holdingRepository.listActiveHoldings(), hasLength(2));
     },
   );
@@ -101,10 +102,11 @@ void main() {
 
     expect(find.text('天天基金'), findsOneWidget);
     expect(find.text('组合概览'), findsOneWidget);
-    expect(find.text('易方达裕丰回报债券A (000171)'), findsOneWidget);
+    expect(find.text('易方达裕丰回报债券A'), findsOneWidget);
+    expect(find.text('000171'), findsAtLeastNWidgets(1));
     expect(find.text('-10.00'), findsAtLeastNWidgets(1));
     expect(find.text('+80.00'), findsAtLeastNWidgets(1));
-    expect(find.text('+20.00'), findsAtLeastNWidgets(1));
+    expect(find.textContaining('+20.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171']);
   });
 
@@ -138,7 +140,9 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    final deleteButton = find.byIcon(Icons.delete_outline);
+    await _openFirstHoldingDetail(tester);
+
+    final deleteButton = find.byTooltip('删除持仓');
     await tester.ensureVisible(deleteButton);
     await tester.tap(deleteButton);
     await tester.pumpAndSettle();
@@ -179,6 +183,7 @@ void main() {
     );
     await tester.pumpAndSettle();
 
+    await _openFirstHoldingDetail(tester);
     await tester.tap(find.byTooltip('编辑持仓'));
     await tester.pumpAndSettle();
 
@@ -208,7 +213,7 @@ void main() {
     expect(find.text('天天基金'), findsOneWidget);
     expect(find.text('-15.00'), findsAtLeastNWidgets(1));
     expect(find.text('+860.00'), findsAtLeastNWidgets(1));
-    expect(find.text('+30.00'), findsAtLeastNWidgets(1));
+    expect(find.textContaining('+30.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171', '000171']);
   });
 
@@ -246,7 +251,10 @@ void main() {
 
     expect(tester.takeException(), isNull);
     expect(find.text('组合概览'), findsOneWidget);
-    expect(find.text('今日估算净值'), findsOneWidget);
+
+    await _openFirstHoldingDetail(tester);
+
+    expect(find.text('今日预估收益'), findsOneWidget);
   });
 
   testWidgets('shows previous trading day movement as yesterday return', (
@@ -294,10 +302,11 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('-144.79'), findsAtLeastNWidgets(1));
-    expect(find.text('累计到昨日收益'), findsAtLeastNWidgets(1));
+
+    await _openFirstHoldingDetail(tester);
+
+    expect(find.text('累计收益'), findsAtLeastNWidgets(1));
     expect(find.text('0.00'), findsAtLeastNWidgets(1));
-    expect(find.text('上一交易日净值'), findsOneWidget);
-    expect(find.text('1.8980'), findsOneWidget);
   });
 }
 
@@ -329,6 +338,13 @@ Future<void> _addHolding(
 
   await tester.tap(find.text('添加并计算'));
   await tester.pump();
+  await tester.pumpAndSettle();
+}
+
+Future<void> _openFirstHoldingDetail(WidgetTester tester) async {
+  final holdingTitle = find.textContaining('债券').first;
+  await tester.ensureVisible(holdingTitle);
+  await tester.tap(holdingTitle);
   await tester.pumpAndSettle();
 }
 

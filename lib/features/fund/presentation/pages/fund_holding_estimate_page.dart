@@ -1,13 +1,16 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/models/realtime_estimate.dart';
 import '../../data/repositories/fund_estimate_repository_provider.dart';
 import '../../data/repositories/fund_holding_repository_provider.dart';
 import '../../domain/fund_holding_estimate.dart';
 
-const _cardRadius = 16.0;
-const _innerRadius = 10.0;
+const _cardRadius = 12.0;
+const _innerRadius = 8.0;
 
 class FundHoldingEstimatePage extends ConsumerStatefulWidget {
   const FundHoldingEstimatePage({super.key});
@@ -23,6 +26,8 @@ class _FundHoldingEstimatePageState
   Object? _loadHoldingsError;
   final _holdings = <FundHoldingInput>[];
   final _holdingStates = <int, AsyncValue<FundHoldingEstimate>>{};
+  // code → in-flight or completed Future; multiple holdings with same code share one request
+  final _estimateCache = <String, Future<RealtimeEstimate>>{};
 
   @override
   void initState() {
@@ -36,6 +41,7 @@ class _FundHoldingEstimatePageState
           .read(fundHoldingRepositoryProvider)
           .listActiveHoldings();
       if (!mounted) return;
+      _estimateCache.clear();
       setState(() {
         _holdings
           ..clear()
@@ -48,7 +54,8 @@ class _FundHoldingEstimatePageState
         _loadHoldingsError = null;
         _isLoadingHoldings = false;
       });
-      await Future.wait(holdings.map(_refreshHolding));
+      // same-code holdings share one in-flight Future via _getEstimate
+      await Future.wait(holdings.map(_computeEstimate));
     } catch (error) {
       if (!mounted) return;
       setState(() {
@@ -63,11 +70,12 @@ class _FundHoldingEstimatePageState
       MaterialPageRoute(builder: (_) => const FundHoldingEntryPage()),
     );
     if (input == null || !mounted) return;
+    _estimateCache.remove(input.code);
     setState(() {
       _holdings.add(input);
       _holdingStates[input.id] = const AsyncLoading();
     });
-    await _refreshHolding(input);
+    await _computeEstimate(input);
   }
 
   Future<void> _openEditHoldingPage(FundHoldingInput holding) async {
@@ -77,6 +85,7 @@ class _FundHoldingEstimatePageState
       ),
     );
     if (updated == null || !mounted) return;
+    _estimateCache.remove(updated.code);
     setState(() {
       final index = _holdings.indexWhere((item) => item.id == updated.id);
       if (index == -1) {
@@ -84,22 +93,43 @@ class _FundHoldingEstimatePageState
       } else {
         _holdings[index] = updated;
       }
-      _holdingStates[updated.id] = const AsyncLoading();
+      // refresh all holdings sharing the same code
+      for (final h in _holdings.where((h) => h.code == updated.code)) {
+        _holdingStates[h.id] = const AsyncLoading();
+      }
     });
-    await _refreshHolding(updated);
+    await Future.wait(
+      _holdings.where((h) => h.code == updated.code).map(_computeEstimate),
+    );
   }
 
+  // Called from UI refresh button: invalidates cache and refreshes all same-code holdings.
   Future<void> _refreshHolding(FundHoldingInput input) async {
-    setState(() => _holdingStates[input.id] = const AsyncLoading());
-    final result = await AsyncValue.guard(() async {
-      final realtimeEstimate = await ref
-          .read(fundEstimateRepositoryProvider)
-          .fetchRealtimeEstimate(input.code);
-      return calculateFundHoldingEstimate(
-        input: input,
-        realtimeEstimate: realtimeEstimate,
-      );
+    _estimateCache.remove(input.code);
+    final targets = _holdings.where((h) => h.code == input.code).toList();
+    setState(() {
+      for (final t in targets) {
+        _holdingStates[t.id] = const AsyncLoading();
+      }
     });
+    await Future.wait(targets.map(_computeEstimate));
+  }
+
+  Future<RealtimeEstimate> _getEstimate(String code) =>
+      _estimateCache.putIfAbsent(
+        code,
+        () => ref
+            .read(fundEstimateRepositoryProvider)
+            .fetchRealtimeEstimate(code),
+      );
+
+  Future<void> _computeEstimate(FundHoldingInput input) async {
+    final result = await AsyncValue.guard(
+      () async => calculateFundHoldingEstimate(
+        input: input,
+        realtimeEstimate: await _getEstimate(input.code),
+      ),
+    );
     if (!mounted) return;
     setState(() {
       if (_holdings.any((h) => h.id == input.id)) {
@@ -124,6 +154,107 @@ class _FundHoldingEstimatePageState
     }
   }
 
+  Future<void> _openImportJsonDialog() async {
+    final controller = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('从 JSON 导入持仓'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '粘贴 holdings.json 内容，格式：\n{"holdings":{"渠道名":[{...}]}}',
+                style: Theme.of(ctx).textTheme.bodySmall?.copyWith(
+                  color: Theme.of(ctx).colorScheme.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                maxLines: 8,
+                decoration: const InputDecoration(
+                  hintText: '在此粘贴 JSON...',
+                  border: OutlineInputBorder(),
+                ),
+                style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('导入'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final jsonText = controller.text.trim();
+    if (jsonText.isEmpty) return;
+
+    final result = await _importHoldingsFromJson(jsonText);
+    if (!mounted) return;
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          result.failed == 0
+              ? '成功导入 ${result.imported} 笔持仓'
+              : '导入 ${result.imported} 笔，${result.failed} 笔失败',
+        ),
+      ),
+    );
+
+    if (result.imported > 0) {
+      await _loadHoldings();
+    }
+  }
+
+  Future<({int imported, int failed})> _importHoldingsFromJson(
+    String jsonText,
+  ) async {
+    final decoded = jsonDecode(jsonText) as Map<String, dynamic>;
+    final holdingsMap = decoded['holdings'] as Map<String, dynamic>;
+    final repository = ref.read(fundHoldingRepositoryProvider);
+
+    var imported = 0;
+    var failed = 0;
+
+    for (final channelEntry in holdingsMap.entries) {
+      final channel = channelEntry.key;
+      final items = channelEntry.value as List<dynamic>;
+      for (final item in items) {
+        try {
+          final h = item as Map<String, dynamic>;
+          final draft = FundHoldingDraft(
+            code: h['code'] as String,
+            purchaseDate: DateTime.parse(h['buy_date'] as String),
+            shares: (h['shares'] as num).toDouble(),
+            channel: channel,
+            purchaseNav: (h['cost_nav'] as num).toDouble(),
+            fee: (h['fee'] as num?)?.toDouble() ?? 0.0,
+          );
+          await repository.insertHolding(draft);
+          imported++;
+        } catch (_) {
+          failed++;
+        }
+      }
+    }
+
+    return (imported: imported, failed: failed);
+  }
+
   @override
   Widget build(BuildContext context) {
     final estimates = _holdings
@@ -141,6 +272,13 @@ class _FundHoldingEstimatePageState
         elevation: 0,
         backgroundColor: Colors.transparent,
         surfaceTintColor: Colors.transparent,
+        actions: [
+          IconButton(
+            onPressed: _openImportJsonDialog,
+            tooltip: '从 JSON 导入持仓',
+            icon: const Icon(Icons.file_download_outlined),
+          ),
+        ],
       ),
       floatingActionButton: FloatingActionButton.extended(
         tooltip: '新增持仓',
@@ -205,270 +343,280 @@ class _PortfolioOverview extends StatelessWidget {
         ? estimates.fold<double>(0, (s, e) => s + _todayEstimatedReturn(e))
         : 0.0;
 
-    // Gradient changes with market sentiment (中国习惯：红涨绿跌)
-    final List<Color> gradientColors;
-    if (!hasEstimate) {
-      gradientColors = [const Color(0xFF1A237E), const Color(0xFF3949AB)];
-    } else if (yesterdayActualReturn >= 0) {
-      gradientColors = [const Color(0xFFB71C1C), const Color(0xFFE53935)];
-    } else {
-      gradientColors = [const Color(0xFF1B5E20), const Color(0xFF388E3C)];
-    }
+    final cs = Theme.of(context).colorScheme;
+    final sentimentColor = hasEstimate
+        ? _signedColor(yesterdayActualReturn, cs)
+        : cs.primary;
 
     return Container(
       decoration: BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: gradientColors,
-        ),
+        color: cs.surface,
         borderRadius: BorderRadius.circular(_cardRadius),
+        border: Border.all(color: cs.outlineVariant.withAlpha(150)),
         boxShadow: [
           BoxShadow(
-            color: gradientColors.first.withAlpha(100),
-            blurRadius: 20,
+            color: cs.shadow.withAlpha(20),
+            blurRadius: 18,
             offset: const Offset(0, 8),
           ),
         ],
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(20),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Header row
-            Row(
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(height: 4, color: sentimentColor),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 16, 18, 18),
+            child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: Colors.white.withAlpha(36),
-                    borderRadius: BorderRadius.circular(_innerRadius),
-                  ),
-                  child: const Icon(
-                    Icons.pie_chart_outline,
-                    size: 20,
-                    color: Colors.white,
-                  ),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Container(
+                      width: 38,
+                      height: 38,
+                      decoration: BoxDecoration(
+                        color: sentimentColor.withAlpha(22),
+                        borderRadius: BorderRadius.circular(_innerRadius),
+                        border: Border.all(color: sentimentColor.withAlpha(55)),
+                      ),
+                      child: Icon(
+                        Icons.pie_chart_outline,
+                        size: 21,
+                        color: sentimentColor,
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            '组合概览',
+                            style: Theme.of(context).textTheme.titleMedium
+                                ?.copyWith(
+                                  color: cs.onSurface,
+                                  fontWeight: FontWeight.w800,
+                                ),
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            '${holdings.length} 笔持仓 · $channels 个渠道',
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: cs.onSurfaceVariant),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (hasEstimate)
+                      _StatusPill(
+                        label: '昨日确认',
+                        color: sentimentColor,
+                        icon: Icons.check_circle_outline,
+                      ),
+                  ],
                 ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '组合概览',
-                        style: Theme.of(context).textTheme.titleMedium
-                            ?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w800,
+                const SizedBox(height: 20),
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    Expanded(
+                      flex: 5,
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            hasEstimate ? '昨日资产变动' : '正在拉取估值',
+                            style: Theme.of(context).textTheme.labelMedium
+                                ?.copyWith(
+                                  color: cs.onSurfaceVariant,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                          ),
+                          const SizedBox(height: 6),
+                          FittedBox(
+                            fit: BoxFit.scaleDown,
+                            alignment: Alignment.centerLeft,
+                            child: Text(
+                              hasEstimate
+                                  ? _formatSignedMoney(yesterdayActualReturn)
+                                  : '估算中...',
+                              style: Theme.of(context).textTheme.displaySmall
+                                  ?.copyWith(
+                                    color: sentimentColor,
+                                    fontWeight: FontWeight.w900,
+                                  ),
                             ),
+                          ),
+                          if (hasEstimate) ...[
+                            const SizedBox(height: 5),
+                            Text(
+                              '昨日变动率 ${_formatPercent(yesterdayRate)}',
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(
+                                    color: cs.onSurfaceVariant,
+                                    fontWeight: FontWeight.w700,
+                                  ),
+                            ),
+                          ],
+                        ],
                       ),
-                      Text(
-                        '${holdings.length} 笔持仓 · $channels 个渠道',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.white.withAlpha(180),
-                        ),
-                      ),
+                    ),
+                    if (hasEstimate) ...[
+                      const SizedBox(width: 12),
+                      _TodayEstimatePill(value: todayEstimate),
                     ],
-                  ),
+                  ],
                 ),
-                if (hasEstimate)
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 5,
+                const SizedBox(height: 18),
+                _OverviewStatGrid(
+                  items: [
+                    _OverviewStatItem(
+                      label: '估算市值',
+                      value: hasEstimate ? _formatMoney(estimatedValue) : '--',
                     ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withAlpha(36),
-                      borderRadius: BorderRadius.circular(999),
-                      border: Border.all(
-                        color: Colors.white.withAlpha(80),
-                        width: 1,
-                      ),
+                    _OverviewStatItem(
+                      label: '持仓成本',
+                      value: hasEstimate ? _formatMoney(totalCost) : '--',
                     ),
-                    child: Text(
-                      '昨日确认',
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                      ),
+                    _OverviewStatItem(
+                      label: '累计收益',
+                      value: hasEstimate
+                          ? _formatSignedMoney(confirmedTotalReturn)
+                          : '--',
+                      valueColor: hasEstimate
+                          ? _signedColor(confirmedTotalReturn, cs)
+                          : cs.onSurface,
                     ),
-                  ),
+                  ],
+                ),
               ],
             ),
-            const SizedBox(height: 20),
-            // Main return figures
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                Expanded(
-                  flex: 5,
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        hasEstimate ? '昨日资产变动' : '正在拉取估值',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(color: Colors.white.withAlpha(180)),
-                      ),
-                      const SizedBox(height: 6),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          hasEstimate
-                              ? _formatSignedMoney(yesterdayActualReturn)
-                              : '估算中...',
-                          style: Theme.of(context).textTheme.displaySmall
-                              ?.copyWith(
-                                color: Colors.white,
-                                fontWeight: FontWeight.w900,
-                                letterSpacing: -1,
-                              ),
-                        ),
-                      ),
-                      if (hasEstimate) ...[
-                        const SizedBox(height: 4),
-                        Text(
-                          '昨日变动率 ${_formatPercent(yesterdayRate)}',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Colors.white.withAlpha(200),
-                                fontWeight: FontWeight.w700,
-                              ),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-                if (hasEstimate) ...[
-                  const SizedBox(width: 16),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 10,
-                    ),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withAlpha(28),
-                      borderRadius: BorderRadius.circular(_innerRadius),
-                      border: Border.all(
-                        color: Colors.white.withAlpha(60),
-                        width: 1,
-                      ),
-                    ),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Text(
-                          '今日预估',
-                          style: Theme.of(
-                            context,
-                          ).textTheme.labelSmall?.copyWith(
-                            color: Colors.white.withAlpha(180),
-                          ),
-                        ),
-                        const SizedBox(height: 4),
-                        Text(
-                          _formatSignedMoney(todayEstimate),
-                          style: Theme.of(
-                            context,
-                          ).textTheme.titleMedium?.copyWith(
-                            color: Colors.white,
-                            fontWeight: FontWeight.w900,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ],
-            ),
-            const SizedBox(height: 20),
-            // Bottom stats — 2×2 grid, more breathing room per cell
-            Container(
-              padding: const EdgeInsets.fromLTRB(12, 14, 12, 14),
-              decoration: BoxDecoration(
-                color: Colors.white.withAlpha(20),
-                borderRadius: BorderRadius.circular(_innerRadius),
-                border: Border.all(color: Colors.white.withAlpha(40)),
-              ),
-              child: Column(
-                children: [
-                  Row(
-                    children: [
-                      _HeroStat(
-                        label: '今日估算市值',
-                        value: hasEstimate ? _formatMoney(estimatedValue) : '--',
-                      ),
-                      _HeroStatDivider(),
-                      _HeroStat(
-                        label: '持仓成本',
-                        value: hasEstimate ? _formatMoney(totalCost) : '--',
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  Container(height: 1, color: Colors.white.withAlpha(25)),
-                  const SizedBox(height: 12),
-                  Row(
-                    children: [
-                      _HeroStat(
-                        label: '累计到昨日收益',
-                        value: hasEstimate
-                            ? _formatSignedMoney(confirmedTotalReturn)
-                            : '--',
-                      ),
-                      _HeroStatDivider(),
-                      _HeroStat(
-                        label: '持仓渠道',
-                        value: '$channels 个',
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
   }
 }
 
-class _HeroStat extends StatelessWidget {
-  const _HeroStat({required this.label, required this.value});
+class _TodayEstimatePill extends StatelessWidget {
+  const _TodayEstimatePill({required this.value});
 
-  final String label;
-  final String value;
+  final double value;
 
   @override
   Widget build(BuildContext context) {
-    return Expanded(
+    final cs = Theme.of(context).colorScheme;
+    final color = _signedColor(value, cs);
+    return Container(
+      constraints: const BoxConstraints(minWidth: 112),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withAlpha(130),
+        borderRadius: BorderRadius.circular(_innerRadius),
+        border: Border.all(color: cs.outlineVariant.withAlpha(130)),
+      ),
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Text(
-            label,
+            '今日预估',
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          const SizedBox(height: 4),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerRight,
+            child: Text(
+              _formatSignedMoney(value),
+              maxLines: 1,
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w900,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _OverviewStatGrid extends StatelessWidget {
+  const _OverviewStatGrid({required this.items});
+
+  final List<_OverviewStatItem> items;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        const spacing = 8.0;
+        final columns = constraints.maxWidth >= 520 ? 4 : 2;
+        final tileWidth =
+            (constraints.maxWidth - spacing * (columns - 1)) / columns;
+        return Wrap(
+          spacing: spacing,
+          runSpacing: spacing,
+          children: [
+            for (final item in items)
+              SizedBox(
+                width: tileWidth,
+                child: _OverviewStat(item: item),
+              ),
+          ],
+        );
+      },
+    );
+  }
+}
+
+class _OverviewStat extends StatelessWidget {
+  const _OverviewStat({required this.item});
+
+  final _OverviewStatItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      constraints: const BoxConstraints(minHeight: 68),
+      padding: const EdgeInsets.fromLTRB(10, 9, 10, 9),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(_innerRadius),
+        border: Border.all(color: cs.outlineVariant.withAlpha(105)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Text(
+            item.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: Colors.white.withAlpha(160),
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w600,
             ),
           ),
           const SizedBox(height: 5),
           FittedBox(
             fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
             child: Text(
-              value,
+              item.value,
               maxLines: 1,
-              textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                color: Colors.white,
+              style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: item.valueColor ?? cs.onSurface,
                 fontWeight: FontWeight.w800,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -478,15 +626,52 @@ class _HeroStat extends StatelessWidget {
   }
 }
 
-class _HeroStatDivider extends StatelessWidget {
+class _StatusPill extends StatelessWidget {
+  const _StatusPill({required this.label, required this.color, this.icon});
+
+  final String label;
+  final Color color;
+  final IconData? icon;
+
   @override
   Widget build(BuildContext context) {
     return Container(
-      width: 1,
-      height: 28,
-      color: Colors.white.withAlpha(50),
+      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 5),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        borderRadius: BorderRadius.circular(999),
+        border: Border.all(color: color.withAlpha(70)),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (icon != null) ...[
+            Icon(icon, size: 13, color: color),
+            const SizedBox(width: 4),
+          ],
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelSmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+        ],
+      ),
     );
   }
+}
+
+class _OverviewStatItem {
+  const _OverviewStatItem({
+    required this.label,
+    required this.value,
+    this.valueColor,
+  });
+
+  final String label;
+  final String value;
+  final Color? valueColor;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -598,19 +783,27 @@ class _ChannelGroupCard extends StatelessWidget {
     );
     final hasEstimate = estimates.isNotEmpty;
     final returnColor = hasEstimate
-        ? _returnColor(yesterdayActualReturn)
+        ? _signedColor(yesterdayActualReturn, cs)
         : cs.primary;
+    final totalValue = estimates.fold<double>(
+      0,
+      (sum, estimate) => sum + _yesterdayValue(estimate),
+    );
+    final totalCost = estimates.fold<double>(
+      0,
+      (sum, estimate) => sum + estimate.cost,
+    );
 
     return Container(
       decoration: BoxDecoration(
         color: cs.surface,
         borderRadius: BorderRadius.circular(_cardRadius),
-        border: Border.all(color: accent.withAlpha(90), width: 1.5),
+        border: Border.all(color: cs.outlineVariant.withAlpha(130)),
         boxShadow: [
           BoxShadow(
-            color: cs.shadow.withAlpha(36),
+            color: cs.shadow.withAlpha(18),
             blurRadius: 14,
-            offset: const Offset(0, 5),
+            offset: const Offset(0, 6),
           ),
         ],
       ),
@@ -620,30 +813,23 @@ class _ChannelGroupCard extends StatelessWidget {
         children: [
           // Top accent strip — clearest channel identity signal
           Container(height: 5, color: accent),
-          // Header — gradient overlay (accent left → transparent right)
           Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                begin: Alignment.centerLeft,
-                end: Alignment.centerRight,
-                colors: [accent.withAlpha(55), accent.withAlpha(10)],
-              ),
-            ),
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+            color: cs.surface,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
             child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                // Icon badge using accent colour
                 Container(
-                  width: 42,
-                  height: 42,
+                  width: 38,
+                  height: 38,
                   decoration: BoxDecoration(
-                    color: accent.withAlpha(36),
+                    color: accent.withAlpha(22),
                     borderRadius: BorderRadius.circular(_innerRadius),
-                    border: Border.all(color: accent.withAlpha(80), width: 1.5),
+                    border: Border.all(color: accent.withAlpha(65)),
                   ),
                   child: Icon(
                     Icons.account_balance_wallet_outlined,
-                    size: 22,
+                    size: 21,
                     color: accent,
                   ),
                 ),
@@ -660,49 +846,37 @@ class _ChannelGroupCard extends StatelessWidget {
                             ?.copyWith(fontWeight: FontWeight.w800),
                       ),
                       const SizedBox(height: 2),
-                      Row(
-                        children: [
-                          Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 6,
-                              vertical: 2,
-                            ),
-                            decoration: BoxDecoration(
-                              color: accent.withAlpha(22),
-                              borderRadius: BorderRadius.circular(4),
-                              border: Border.all(color: accent.withAlpha(55)),
-                            ),
-                            child: Text(
-                              '${holdings.length} 笔持仓',
-                              style: Theme.of(
-                                context,
-                              ).textTheme.labelSmall?.copyWith(
-                                color: accent,
-                                fontWeight: FontWeight.w700,
-                              ),
-                            ),
-                          ),
-                        ],
+                      Text(
+                        hasEstimate
+                            ? '${holdings.length} 笔 · 成本 ${_formatMoney(totalCost)} · 昨日市值 ${_formatMoney(totalValue)}'
+                            : '${holdings.length} 笔持仓 · 正在估算',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                        ),
                       ),
                     ],
                   ),
                 ),
                 if (hasEstimate) ...[
+                  const SizedBox(width: 12),
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.end,
                     children: [
+                      Text(
+                        '昨日变动',
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                          color: cs.onSurfaceVariant,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
                       Text(
                         _formatSignedMoney(yesterdayActualReturn),
                         style: Theme.of(context).textTheme.titleSmall?.copyWith(
                           color: returnColor,
                           fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        '昨日变动',
-                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: cs.onSurfaceVariant,
                         ),
                       ),
                     ],
@@ -711,15 +885,9 @@ class _ChannelGroupCard extends StatelessWidget {
               ],
             ),
           ),
-          // Accent divider before holdings list
-          Container(
-            height: 1,
-            color: accent.withAlpha(60),
-            margin: const EdgeInsets.only(bottom: 2),
-          ),
-          // Holdings list
+          Container(height: 1, color: cs.outlineVariant.withAlpha(110)),
           Padding(
-            padding: const EdgeInsets.all(10),
+            padding: const EdgeInsets.all(8),
             child: Column(
               children: [
                 for (int i = 0; i < holdings.length; i++) ...[
@@ -781,15 +949,15 @@ class _HoldingCard extends StatelessWidget {
     final cs = Theme.of(context).colorScheme;
     final accentColor = state.when(
       loading: () => cs.outline,
-      error: (_, __) => cs.error,
-      data: (e) => _returnColor(_yesterdayActualReturn(e)),
+      error: (_, _) => cs.error,
+      data: (e) => _signedColor(_yesterdayActualReturn(e), cs),
     );
 
     return Container(
       decoration: BoxDecoration(
         color: cs.surfaceContainerLowest,
         borderRadius: BorderRadius.circular(_innerRadius),
-        border: Border.all(color: cs.outlineVariant.withAlpha(100)),
+        border: Border.all(color: cs.outlineVariant.withAlpha(115)),
       ),
       clipBehavior: Clip.antiAlias,
       child: Material(
@@ -834,7 +1002,7 @@ class _HoldingCard extends StatelessWidget {
                       ),
                     ],
                   ),
-                  error: (_, __) => Row(
+                  error: (_, _) => Row(
                     children: [
                       Expanded(
                         child: Text(
@@ -847,9 +1015,9 @@ class _HoldingCard extends StatelessWidget {
                       const SizedBox(width: 4),
                       Text(
                         '拉取失败',
-                        style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: cs.error,
-                        ),
+                        style: Theme.of(
+                          context,
+                        ).textTheme.bodySmall?.copyWith(color: cs.error),
                       ),
                       const SizedBox(width: 4),
                       Icon(
@@ -861,10 +1029,10 @@ class _HoldingCard extends StatelessWidget {
                   ),
                   data: (estimate) {
                     final realtime = estimate.realtimeEstimate;
-                    final yReturn = _yesterdayActualReturn(estimate);
-                    final yRate = _returnRate(yReturn, estimate.cost);
-                    final returnColor = _returnColor(yReturn);
+                    final todayEstimate = _todayEstimatedReturn(estimate);
+                    final todayColor = _signedColor(todayEstimate, cs);
                     return Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
                       children: [
                         Expanded(
                           child: Column(
@@ -911,65 +1079,50 @@ class _HoldingCard extends StatelessWidget {
                                 ],
                               ),
                               const SizedBox(height: 3),
-                              Row(
-                                children: [
-                                  Text(
-                                    '买入 ${_formatDate(estimate.input.purchaseDate)}',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodySmall
-                                        ?.copyWith(
-                                          color: cs.onSurfaceVariant,
-                                        ),
-                                  ),
-                                  if (realtime.estChangePct != null) ...[
-                                    const SizedBox(width: 6),
-                                    Container(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 5,
-                                        vertical: 2,
-                                      ),
-                                      decoration: BoxDecoration(
-                                        color: _returnColor(
-                                          realtime.estChangePct!,
-                                        ).withAlpha(18),
-                                        borderRadius: BorderRadius.circular(4),
-                                      ),
-                                      child: Text(
-                                        '今日 ${_formatSignedPercent(realtime.estChangePct!)}',
-                                        style: Theme.of(context)
-                                            .textTheme
-                                            .labelSmall
-                                            ?.copyWith(
-                                              color: _returnColor(
-                                                realtime.estChangePct!,
-                                              ),
-                                              fontWeight: FontWeight.w700,
-                                            ),
-                                      ),
-                                    ),
-                                  ],
-                                ],
+                              Text(
+                                '成本 ${_formatMoney(estimate.cost)}  ·  ${_formatDate(estimate.input.purchaseDate)}',
+                                style: Theme.of(context).textTheme.bodySmall
+                                    ?.copyWith(color: cs.onSurfaceVariant),
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(width: 8),
+                        const SizedBox(width: 10),
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.end,
                           children: [
                             Text(
-                              _formatSignedMoney(yReturn),
-                              style: Theme.of(context).textTheme.titleSmall
+                              '今日预估',
+                              style: Theme.of(context).textTheme.labelSmall
                                   ?.copyWith(
-                                    color: returnColor,
-                                    fontWeight: FontWeight.w800,
+                                    color: cs.onSurfaceVariant,
+                                    fontSize: 10,
                                   ),
                             ),
+                            const SizedBox(height: 2),
                             Text(
-                              _formatPercent(yRate),
+                              _formatSignedMoney(todayEstimate),
+                              style: Theme.of(context).textTheme.titleSmall
+                                  ?.copyWith(
+                                    color: todayColor,
+                                    fontWeight: FontWeight.w900,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
+                            ),
+                            const SizedBox(height: 1),
+                            Text(
+                              _formatSignedPercent(realtime.estChangePct),
                               style: Theme.of(context).textTheme.labelSmall
-                                  ?.copyWith(color: returnColor),
+                                  ?.copyWith(
+                                    color: todayColor,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w700,
+                                    fontFeatures: const [
+                                      FontFeature.tabularFigures(),
+                                    ],
+                                  ),
                             ),
                           ],
                         ),
@@ -1104,12 +1257,12 @@ class _HoldingEstimateResult extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
     final yesterdayActualReturn = _yesterdayActualReturn(estimate);
-    final yesterdayActualRate = _returnRate(yesterdayActualReturn, estimate.cost);
     final confirmedTotalReturn = _confirmedTotalReturn(estimate);
     final confirmedTotalRate = _returnRate(confirmedTotalReturn, estimate.cost);
     final todayEstimate = _todayEstimatedReturn(estimate);
-    final color = _returnColor(yesterdayActualReturn);
+    final color = _signedColor(yesterdayActualReturn, cs);
     final realtime = estimate.realtimeEstimate;
 
     return Column(
@@ -1125,165 +1278,79 @@ class _HoldingEstimateResult extends StatelessWidget {
           onRemove: onRemove,
         ),
         const SizedBox(height: 10),
-        _ReturnBanner(
-          totalReturn: yesterdayActualReturn,
-          totalReturnRate: yesterdayActualRate,
-          todayEstimate: todayEstimate,
-          color: color,
+        // Today estimate highlight
+        Container(
+          width: double.infinity,
+          padding: const EdgeInsets.fromLTRB(16, 14, 16, 14),
+          decoration: BoxDecoration(
+            color: color.withAlpha(18),
+            borderRadius: BorderRadius.circular(_innerRadius),
+            border: Border.all(color: color.withAlpha(60)),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '今日预估收益',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                  color: cs.onSurfaceVariant,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(height: 6),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.baseline,
+                textBaseline: TextBaseline.alphabetic,
+                children: [
+                  Text(
+                    _formatSignedMoney(todayEstimate),
+                    style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w900,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Text(
+                    _formatSignedPercent(realtime.estChangePct),
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: color,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '估算净值 ${_formatNumber(realtime.estNav, 4)}  ·  ${realtime.estTime}',
+                style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  color: cs.onSurfaceVariant,
+                ),
+              ),
+            ],
+          ),
         ),
         const SizedBox(height: 10),
         _MetricGrid(
           items: [
-            _MetricItem('今日估算净值', _formatNumber(realtime.estNav, 4)),
-            _MetricItem('估算市值', _formatMoney(estimate.estimatedValue)),
             _MetricItem('持仓成本', _formatMoney(estimate.cost)),
-            _MetricItem('昨日变动率', _formatPercent(yesterdayActualRate)),
-            _MetricItem('累计到昨日收益', _formatSignedMoney(confirmedTotalReturn)),
-            _MetricItem('累计收益率', _formatPercent(confirmedTotalRate)),
-            _MetricItem('今日预估收益', _formatSignedMoney(todayEstimate)),
-            _MetricItem('涨跌幅', _formatSignedPercent(realtime.estChangePct)),
+            _MetricItem('估算市值', _formatMoney(estimate.estimatedValue)),
+            _MetricItem(
+              '累计收益',
+              _formatSignedMoney(confirmedTotalReturn),
+              valueColor: _signedColor(confirmedTotalReturn, cs),
+            ),
+            _MetricItem(
+              '累计收益率',
+              _formatPercent(confirmedTotalRate),
+              valueColor: _signedColor(confirmedTotalRate, cs),
+            ),
             _MetricItem('购买净值', _formatNumber(estimate.input.purchaseNav, 4)),
             _MetricItem('持有份额', _formatNumber(estimate.input.shares, 2)),
-            _MetricItem('手续费', _formatMoney(estimate.input.fee)),
-            _MetricItem('昨日净值', _formatNumber(realtime.prevNav, 4)),
-          ],
-        ),
-        const SizedBox(height: 10),
-        _EstimateMetaRow(
-          items: [
-            _EstimateMetaItem(
-              icon: Icons.schedule,
-              label: '估值时间',
-              value: realtime.estTime,
-            ),
-            _EstimateMetaItem(
-              icon: Icons.history,
-              label: '昨日净值',
-              value: _formatNumber(realtime.prevNav, 4),
-              helper: realtime.prevNavDate,
-            ),
-            if (realtime.previousTradingNav != null)
-              _EstimateMetaItem(
-                icon: Icons.trending_flat,
-                label: '上一交易日',
-                value: _formatNumber(realtime.previousTradingNav!, 4),
-                helper: realtime.previousTradingNavDate,
-              ),
           ],
         ),
       ],
-    );
-  }
-}
-
-class _ReturnBanner extends StatelessWidget {
-  const _ReturnBanner({
-    required this.totalReturn,
-    required this.totalReturnRate,
-    required this.todayEstimate,
-    required this.color,
-  });
-
-  final double totalReturn;
-  final double totalReturnRate;
-  final double todayEstimate;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return Container(
-      decoration: BoxDecoration(
-        color: color.withAlpha(18),
-        borderRadius: BorderRadius.circular(_innerRadius),
-        border: Border.all(color: color.withAlpha(60)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            Expanded(
-              flex: 3,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '昨日资产变动',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _formatSignedMoney(totalReturn),
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(
-                            color: color,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: -0.5,
-                          ),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 3,
-                    ),
-                    decoration: BoxDecoration(
-                      color: color.withAlpha(22),
-                      borderRadius: BorderRadius.circular(5),
-                    ),
-                    child: Text(
-                      _formatPercent(totalReturnRate),
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: color,
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            Container(
-              width: 1,
-              height: 50,
-              color: color.withAlpha(50),
-              margin: const EdgeInsets.symmetric(horizontal: 16),
-            ),
-            Expanded(
-              flex: 2,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    '今日预估收益',
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    alignment: Alignment.centerLeft,
-                    child: Text(
-                      _formatSignedMoney(todayEstimate),
-                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                        color: _signedColor(todayEstimate, cs),
-                        fontWeight: FontWeight.w900,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -1357,9 +1424,9 @@ class _HoldingHeader extends StatelessWidget {
                 children: [
                   Text(
                     subtitle,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                    ),
+                    style: Theme.of(
+                      context,
+                    ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
                   ),
                   if (changePct != null)
                     Container(
@@ -1368,16 +1435,16 @@ class _HoldingHeader extends StatelessWidget {
                         vertical: 3,
                       ),
                       decoration: BoxDecoration(
-                        color: _returnColor(changePct!).withAlpha(18),
+                        color: _signedColor(changePct!, cs).withAlpha(18),
                         border: Border.all(
-                          color: _returnColor(changePct!).withAlpha(70),
+                          color: _signedColor(changePct!, cs).withAlpha(70),
                         ),
                         borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         '今日 ${_formatSignedPercent(changePct!)}',
                         style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                          color: _returnColor(changePct!),
+                          color: _signedColor(changePct!, cs),
                           fontWeight: FontWeight.w800,
                         ),
                       ),
@@ -1431,7 +1498,10 @@ class _MetricGrid extends StatelessWidget {
           runSpacing: spacing,
           children: [
             for (final item in items)
-              SizedBox(width: tileWidth, child: _MetricTile(item: item)),
+              SizedBox(
+                width: tileWidth,
+                child: _MetricTile(item: item),
+              ),
           ],
         );
       },
@@ -1448,21 +1518,24 @@ class _MetricTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     return Container(
+      constraints: const BoxConstraints(minHeight: 70),
       padding: const EdgeInsets.fromLTRB(11, 10, 11, 10),
       decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withAlpha(160),
-        borderRadius: BorderRadius.circular(8),
+        color: cs.surfaceContainerLowest,
+        borderRadius: BorderRadius.circular(_innerRadius),
+        border: Border.all(color: cs.outlineVariant.withAlpha(105)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
           Text(
             item.label,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: cs.onSurfaceVariant,
-            ),
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
           ),
           const SizedBox(height: 5),
           FittedBox(
@@ -1472,7 +1545,9 @@ class _MetricTile extends StatelessWidget {
               item.value,
               maxLines: 1,
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                color: item.valueColor ?? cs.onSurface,
                 fontWeight: FontWeight.w800,
+                fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
@@ -1480,126 +1555,6 @@ class _MetricTile extends StatelessWidget {
       ),
     );
   }
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Estimate meta row
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _EstimateMetaRow extends StatelessWidget {
-  const _EstimateMetaRow({required this.items});
-
-  final List<_EstimateMetaItem> items;
-
-  @override
-  Widget build(BuildContext context) {
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final isWide = constraints.maxWidth >= 480;
-        final children = items
-            .map((item) => _EstimateMetaTile(item: item))
-            .toList();
-
-        if (!isWide) {
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              for (int i = 0; i < children.length; i++) ...[
-                children[i],
-                if (i < children.length - 1) const SizedBox(height: 6),
-              ],
-            ],
-          );
-        }
-        return Row(
-          children: [
-            for (int i = 0; i < children.length; i++) ...[
-              Expanded(child: children[i]),
-              if (i < children.length - 1) const SizedBox(width: 6),
-            ],
-          ],
-        );
-      },
-    );
-  }
-}
-
-class _EstimateMetaTile extends StatelessWidget {
-  const _EstimateMetaTile({required this.item});
-
-  final _EstimateMetaItem item;
-
-  @override
-  Widget build(BuildContext context) {
-    final cs = Theme.of(context).colorScheme;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: cs.surfaceContainerHighest.withAlpha(140),
-        borderRadius: BorderRadius.circular(8),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(8),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(item.icon, size: 16, color: cs.onSurfaceVariant),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    item.label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                      color: cs.onSurfaceVariant,
-                      fontSize: 10,
-                    ),
-                  ),
-                  const SizedBox(height: 2),
-                  Text(
-                    item.value,
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
-                  ),
-                  if (item.helper != null) ...[
-                    const SizedBox(height: 1),
-                    Text(
-                      item.helper!,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                        color: cs.onSurfaceVariant,
-                        fontSize: 10,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _EstimateMetaItem {
-  const _EstimateMetaItem({
-    required this.icon,
-    required this.label,
-    required this.value,
-    this.helper,
-  });
-
-  final IconData icon;
-  final String label;
-  final String value;
-  final String? helper;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1628,16 +1583,16 @@ class _HoldingLoading extends StatelessWidget {
             children: [
               Text(
                 holding.code,
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
               const SizedBox(height: 2),
               Text(
                 '买入 ${_formatDate(holding.purchaseDate)} · 正在拉取估值',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant,
-                ),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: cs.onSurfaceVariant),
               ),
             ],
           ),
@@ -1733,9 +1688,9 @@ class _StatePanel extends StatelessWidget {
             Text(
               title,
               textAlign: TextAlign.center,
-              style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w800,
-              ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w800),
             ),
             const SizedBox(height: 10),
             Text(
@@ -1784,9 +1739,7 @@ class _IconActionButton extends StatelessWidget {
         padding: EdgeInsets.zero,
         visualDensity: VisualDensity.compact,
         style: IconButton.styleFrom(
-          shape: RoundedRectangleBorder(
-            borderRadius: BorderRadius.circular(8),
-          ),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         ),
       ),
     );
@@ -1794,10 +1747,11 @@ class _IconActionButton extends StatelessWidget {
 }
 
 class _MetricItem {
-  const _MetricItem(this.label, this.value);
+  const _MetricItem(this.label, this.value, {this.valueColor});
 
   final String label;
   final String value;
+  final Color? valueColor;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2059,8 +2013,7 @@ class _EntryFormCard extends StatelessWidget {
                       ),
                       decoration: BoxDecoration(
                         border: Border.all(
-                          color:
-                              purchaseDate != null ? cs.primary : cs.outline,
+                          color: purchaseDate != null ? cs.primary : cs.outline,
                           width: purchaseDate != null ? 2 : 1,
                         ),
                         borderRadius: BorderRadius.circular(_innerRadius),
