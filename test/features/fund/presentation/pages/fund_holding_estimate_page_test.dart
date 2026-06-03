@@ -8,6 +8,7 @@ import 'package:untitled/features/fund/data/repositories/fund_holding_repository
 import 'package:untitled/features/fund/data/repositories/fund_holding_repository_provider.dart';
 import 'package:untitled/features/fund/domain/fund_holding_estimate.dart';
 import 'package:untitled/features/fund/presentation/pages/fund_holding_estimate_page.dart';
+import 'package:untitled/core/widgets/num_text.dart';
 
 void main() {
   testWidgets(
@@ -108,6 +109,93 @@ void main() {
     expect(find.text('+80.00'), findsAtLeastNWidgets(1));
     expect(find.textContaining('+20.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171']);
+  });
+
+  testWidgets('renders fund code with NumText styling', (tester) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1000));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    final holdingRepository = _FakeFundHoldingRepository(
+      initialHoldings: [
+        FundHoldingInput(
+          id: 1,
+          code: '000171',
+          purchaseDate: DateTime(2026, 1, 1),
+          shares: 1000,
+          channel: '天天基金',
+          purchaseNav: 2,
+          fee: 0,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fundEstimateRepositoryProvider.overrideWithValue(
+            _FakeFundEstimateRepository(),
+          ),
+          fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+        ],
+        child: const MaterialApp(home: FundHoldingEstimatePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(
+      find.byWidgetPredicate(
+        (widget) => widget is NumText && widget.data == '000171',
+      ),
+      findsWidgets,
+    );
+  });
+
+  testWidgets('uses a data menu for importing and exporting holdings json', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1000));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    final holdingRepository = _FakeFundHoldingRepository(
+      initialHoldings: [
+        FundHoldingInput(
+          id: 1,
+          code: '000171',
+          purchaseDate: DateTime(2026, 1, 1),
+          shares: 1000,
+          channel: '天天基金',
+          purchaseNav: 2,
+          fee: 3,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fundEstimateRepositoryProvider.overrideWithValue(
+            _FakeFundEstimateRepository(),
+          ),
+          fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+        ],
+        child: const MaterialApp(home: FundHoldingEstimatePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('持仓数据'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('导入 JSON'), findsOneWidget);
+    expect(find.text('导出 JSON'), findsOneWidget);
+
+    await tester.tap(find.text('导出 JSON'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('导出 JSON'), findsOneWidget);
+    final exportField = tester.widget<TextField>(find.byType(TextField));
+    expect(exportField.controller?.text, contains('"天天基金"'));
+    expect(exportField.controller?.text, contains('"code": "000171"'));
+    expect(exportField.controller?.text, contains('"buy_date": "2026-01-01"'));
+    expect(exportField.controller?.text, contains('"fee": 3.0'));
   });
 
   testWidgets('soft deletes persisted holdings from the page', (tester) async {
