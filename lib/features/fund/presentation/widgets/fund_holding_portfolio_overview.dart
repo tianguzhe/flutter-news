@@ -4,7 +4,7 @@ import '../../domain/fund_holding_estimate.dart';
 import '../utils/fund_holding_display_helpers.dart';
 import 'fund_holding_status_pill.dart';
 
-class FundPortfolioOverview extends StatelessWidget {
+class FundPortfolioOverview extends StatefulWidget {
   const FundPortfolioOverview({
     super.key,
     required this.holdings,
@@ -15,19 +15,30 @@ class FundPortfolioOverview extends StatelessWidget {
   final List<FundHoldingEstimate> estimates;
 
   @override
+  State<FundPortfolioOverview> createState() => _FundPortfolioOverviewState();
+}
+
+class _FundPortfolioOverviewState extends State<FundPortfolioOverview> {
+  var _showSensitiveAmounts = false;
+
+  void _toggleSensitiveAmounts() {
+    setState(() => _showSensitiveAmounts = !_showSensitiveAmounts);
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final channels = holdings.map((h) => h.channel).toSet().length;
-    final totalCost = estimates.fold<double>(0, (s, e) => s + e.cost);
-    final estimatedValue = estimates.fold<double>(
+    final channels = widget.holdings.map((h) => h.channel).toSet().length;
+    final totalCost = widget.estimates.fold<double>(0, (s, e) => s + e.cost);
+    final estimatedValue = widget.estimates.fold<double>(
       0,
       (s, e) => s + e.estimatedValue,
     );
-    final yesterdayValue = estimates.fold<double>(
+    final yesterdayValue = widget.estimates.fold<double>(
       0,
       (s, e) => s + fundHoldingYesterdayValue(e),
     );
     final confirmedTotalReturn = yesterdayValue - totalCost;
-    final yesterdayActualReturn = estimates.fold<double>(
+    final yesterdayActualReturn = widget.estimates.fold<double>(
       0,
       (s, e) => s + fundHoldingYesterdayActualReturn(e),
     );
@@ -35,9 +46,9 @@ class FundPortfolioOverview extends StatelessWidget {
       yesterdayActualReturn,
       totalCost,
     );
-    final hasEstimate = estimates.isNotEmpty;
+    final hasEstimate = widget.estimates.isNotEmpty;
     final todayEstimate = hasEstimate
-        ? estimates.fold<double>(
+        ? widget.estimates.fold<double>(
             0,
             (s, e) => s + fundHoldingTodayEstimatedReturn(e),
           )
@@ -54,10 +65,14 @@ class FundPortfolioOverview extends StatelessWidget {
         label: '估算市值',
         value: hasEstimate ? formatFundHoldingMoney(estimatedValue) : '--',
         valueColor: hasEstimate ? estimateColor : cs.onSurface,
+        isHidden: hasEstimate && !_showSensitiveAmounts,
+        onTap: hasEstimate ? _toggleSensitiveAmounts : null,
       ),
       _OverviewStatItem(
         label: '持仓成本',
         value: hasEstimate ? formatFundHoldingMoney(totalCost) : '--',
+        isHidden: hasEstimate && !_showSensitiveAmounts,
+        onTap: hasEstimate ? _toggleSensitiveAmounts : null,
       ),
       _OverviewStatItem(
         label: '累计收益',
@@ -125,7 +140,7 @@ class FundPortfolioOverview extends StatelessWidget {
                     ),
                     const SizedBox(height: 4),
                     Text(
-                      '${holdings.length} 笔持仓 · $channels 个渠道',
+                      '${widget.holdings.length} 笔持仓 · $channels 个渠道',
                       style: Theme.of(context).textTheme.bodySmall?.copyWith(
                         color: cs.onSurfaceVariant,
                       ),
@@ -350,7 +365,11 @@ class _OverviewStat extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    return Container(
+    final value = item.isHidden ? '***' : item.value;
+    final valueColor = item.isHidden
+        ? cs.onSurface
+        : item.valueColor ?? cs.onSurface;
+    final content = Container(
       constraints: const BoxConstraints(minHeight: 72),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
       decoration: BoxDecoration(
@@ -376,16 +395,34 @@ class _OverviewStat extends StatelessWidget {
             fit: BoxFit.scaleDown,
             alignment: Alignment.centerLeft,
             child: Text(
-              item.value,
+              value,
               maxLines: 1,
               style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                color: item.valueColor ?? cs.onSurface,
+                color: valueColor,
                 fontWeight: FontWeight.w800,
                 fontFeatures: const [FontFeature.tabularFigures()],
               ),
             ),
           ),
         ],
+      ),
+    );
+
+    final onTap = item.onTap;
+    if (onTap == null) return content;
+
+    return Semantics(
+      button: true,
+      toggled: !item.isHidden,
+      hint: item.isHidden ? '点击显示金额' : '点击隐藏金额',
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(fundHoldingInnerRadius),
+        child: InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(fundHoldingInnerRadius),
+          child: content,
+        ),
       ),
     );
   }
@@ -396,9 +433,13 @@ class _OverviewStatItem {
     required this.label,
     required this.value,
     this.valueColor,
+    this.isHidden = false,
+    this.onTap,
   });
 
   final String label;
   final String value;
   final Color? valueColor;
+  final bool isHidden;
+  final VoidCallback? onTap;
 }

@@ -111,6 +111,59 @@ void main() {
     expect(estimateRepository.requestedCodes, ['000171']);
   });
 
+  testWidgets('hides portfolio market value and cost until tapped', (
+    tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(900, 1000));
+    addTearDown(() async => tester.binding.setSurfaceSize(null));
+    final holdingRepository = _FakeFundHoldingRepository(
+      initialHoldings: [
+        FundHoldingInput(
+          id: 1,
+          code: '000171',
+          purchaseDate: DateTime(2026, 1, 1),
+          shares: 1000,
+          channel: '天天基金',
+          purchaseNav: 2,
+          fee: 0,
+        ),
+      ],
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          fundEstimateRepositoryProvider.overrideWithValue(
+            _FakeFundEstimateRepository(),
+          ),
+          fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+        ],
+        child: const MaterialApp(home: FundHoldingEstimatePage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('估算市值'), findsOneWidget);
+    expect(find.text('持仓成本'), findsOneWidget);
+    expect(find.text('***'), findsNWidgets(2));
+    expect(find.text('2100.00'), findsNothing);
+    expect(find.text('2000.00'), findsNothing);
+
+    await tester.tap(find.text('估算市值'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('***'), findsNothing);
+    expect(find.text('2100.00'), findsOneWidget);
+    expect(find.text('2000.00'), findsOneWidget);
+
+    await tester.tap(find.text('持仓成本'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('***'), findsNWidgets(2));
+    expect(find.text('2100.00'), findsNothing);
+    expect(find.text('2000.00'), findsNothing);
+  });
+
   testWidgets('renders fund code with NumText styling', (tester) async {
     await tester.binding.setSurfaceSize(const Size(900, 1000));
     addTearDown(() async => tester.binding.setSurfaceSize(null));
