@@ -8,6 +8,8 @@ final class RealtimeEstimate {
     required this.estNav,
     required this.estChangePct,
     required this.estTime,
+    this.confirmedNavDate,
+    this.confirmedNav,
     this.previousTradingNavDate,
     this.previousTradingNav,
   });
@@ -19,10 +21,14 @@ final class RealtimeEstimate {
   final double estNav;
   final double estChangePct;
   final String estTime;
+  final String? confirmedNavDate;
+  final double? confirmedNav;
   final String? previousTradingNavDate;
   final double? previousTradingNav;
 
   bool get isUp => estChangePct >= 0;
+  bool get hasConfirmedNav => confirmedNavDate != null && confirmedNav != null;
+  double get valuationNav => confirmedNav ?? estNav;
 
   RealtimeEstimate copyWith({
     String? code,
@@ -32,6 +38,8 @@ final class RealtimeEstimate {
     double? estNav,
     double? estChangePct,
     String? estTime,
+    String? confirmedNavDate,
+    double? confirmedNav,
     String? previousTradingNavDate,
     double? previousTradingNav,
   }) {
@@ -43,6 +51,8 @@ final class RealtimeEstimate {
       estNav: estNav ?? this.estNav,
       estChangePct: estChangePct ?? this.estChangePct,
       estTime: estTime ?? this.estTime,
+      confirmedNavDate: confirmedNavDate ?? this.confirmedNavDate,
+      confirmedNav: confirmedNav ?? this.confirmedNav,
       previousTradingNavDate:
           previousTradingNavDate ?? this.previousTradingNavDate,
       previousTradingNav: previousTradingNav ?? this.previousTradingNav,
@@ -52,7 +62,8 @@ final class RealtimeEstimate {
   @override
   String toString() {
     final sign = isUp ? '+' : '';
-    return '$code $name  $prevNav -> $estNav  '
+    final actual = hasConfirmedNav ? ' confirmed $confirmedNav' : '';
+    return '$code $name  $prevNav -> $estNav$actual  '
         '$sign${estChangePct.toStringAsFixed(2)}%  @$estTime';
   }
 }

@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/widgets/num_text.dart';
 import '../../domain/fund_holding_estimate.dart';
 import '../utils/fund_holding_display_helpers.dart';
-import 'fund_holding_status_pill.dart';
 
 class FundHoldingDetailSheet extends StatelessWidget {
   const FundHoldingDetailSheet({
@@ -116,14 +115,23 @@ class _HoldingEstimateResult extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final confirmedTotalReturn = fundHoldingConfirmedTotalReturn(estimate);
-    final confirmedTotalRate = fundHoldingReturnRate(
-      confirmedTotalReturn,
+    final realtime = estimate.realtimeEstimate;
+    final hasConfirmedNav = realtime.hasConfirmedNav;
+    final todayEstimate = fundHoldingTodayIntradayEstimateReturn(estimate);
+    final finalReturn = fundHoldingTodayEstimatedReturn(estimate);
+    final yesterdayReturn = fundHoldingYesterdayActualReturn(estimate);
+    final displayValue = hasConfirmedNav
+        ? estimate.estimatedValue
+        : realtime.estNav * estimate.input.shares;
+    final displayTotalReturn = displayValue - estimate.cost;
+    final displayTotalRate = fundHoldingReturnRate(
+      displayTotalReturn,
       estimate.cost,
     );
-    final todayEstimate = fundHoldingTodayEstimatedReturn(estimate);
-    final color = fundHoldingEstimateAccent(cs);
-    final realtime = estimate.realtimeEstimate;
+    final color = fundHoldingSignedColor(
+      hasConfirmedNav ? finalReturn : todayEstimate,
+      cs,
+    );
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -156,43 +164,25 @@ class _HoldingEstimateResult extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(
-                '今日预估收益',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              if (hasConfirmedNav)
+                _PrimaryReturnMetric(
+                  label: '今日最终收益',
+                  value: finalReturn,
+                  helper:
+                      '确认净值 ${formatFundHoldingNumber(realtime.valuationNav, 4)} · ${realtime.confirmedNavDate}',
                   color: color,
-                  fontWeight: FontWeight.w800,
+                )
+              else
+                _PendingReturnMetrics(
+                  todayEstimate: todayEstimate,
+                  yesterdayReturn: yesterdayReturn,
+                  estimateTime: realtime.estTime,
+                  estimateNav: realtime.estNav,
+                  yesterdayNavDate: realtime.prevNavDate,
                 ),
-              ),
-              const SizedBox(height: 8),
-              Wrap(
-                spacing: 10,
-                runSpacing: 4,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  FittedBox(
-                    fit: BoxFit.scaleDown,
-                    child: Text(
-                      formatSignedFundHoldingMoney(todayEstimate),
-                      maxLines: 1,
-                      style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(
-                            color: color,
-                            fontWeight: FontWeight.w900,
-                            fontFeatures: const [FontFeature.tabularFigures()],
-                          ),
-                    ),
-                  ),
-                  FundHoldingStatusPill(
-                    label:
-                        '预估 ${formatSignedFundHoldingPercent(realtime.estChangePct)}',
-                    color: color,
-                    icon: Icons.query_stats_rounded,
-                  ),
-                ],
-              ),
               const SizedBox(height: 6),
               Text(
-                '估算净值 ${formatFundHoldingNumber(realtime.estNav, 4)}  ·  ${realtime.estTime}',
+                hasConfirmedNav ? '最终数据已确认' : '最终净值未确认，先显示昨日收益和今日盘中估值',
                 style: Theme.of(
                   context,
                 ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
@@ -204,25 +194,25 @@ class _HoldingEstimateResult extends StatelessWidget {
         _DetailSectionTitle(
           icon: Icons.assessment_outlined,
           label: '收益结果',
-          color: fundHoldingSignedColor(confirmedTotalReturn, cs),
+          color: fundHoldingSignedColor(displayTotalReturn, cs),
         ),
         const SizedBox(height: 9),
         _MetricGrid(
           items: [
             _MetricItem('持仓成本', formatFundHoldingMoney(estimate.cost)),
             _MetricItem(
-              '估算市值',
-              formatFundHoldingMoney(estimate.estimatedValue),
+              hasConfirmedNav ? '实际市值' : '估算市值',
+              formatFundHoldingMoney(displayValue),
             ),
             _MetricItem(
               '累计收益',
-              formatSignedFundHoldingMoney(confirmedTotalReturn),
-              valueColor: fundHoldingSignedColor(confirmedTotalReturn, cs),
+              formatSignedFundHoldingMoney(displayTotalReturn),
+              valueColor: fundHoldingSignedColor(displayTotalReturn, cs),
             ),
             _MetricItem(
               '累计收益率',
-              formatFundHoldingPercent(confirmedTotalRate),
-              valueColor: fundHoldingSignedColor(confirmedTotalRate, cs),
+              formatFundHoldingPercent(displayTotalRate),
+              valueColor: fundHoldingSignedColor(displayTotalRate, cs),
             ),
           ],
         ),
@@ -280,6 +270,155 @@ class _DetailSectionTitle extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _PrimaryReturnMetric extends StatelessWidget {
+  const _PrimaryReturnMetric({
+    required this.label,
+    required this.value,
+    required this.helper,
+    required this.color,
+  });
+
+  final String label;
+  final double value;
+  final String helper;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          label,
+          style: Theme.of(context).textTheme.labelMedium?.copyWith(
+            color: color,
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 8),
+        FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: Alignment.centerLeft,
+          child: Text(
+            formatSignedFundHoldingMoney(value),
+            maxLines: 1,
+            style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+              color: color,
+              fontWeight: FontWeight.w900,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          helper,
+          style: Theme.of(
+            context,
+          ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+        ),
+      ],
+    );
+  }
+}
+
+class _PendingReturnMetrics extends StatelessWidget {
+  const _PendingReturnMetrics({
+    required this.todayEstimate,
+    required this.yesterdayReturn,
+    required this.estimateTime,
+    required this.estimateNav,
+    required this.yesterdayNavDate,
+  });
+
+  final double todayEstimate;
+  final double yesterdayReturn;
+  final String estimateTime;
+  final double estimateNav;
+  final String yesterdayNavDate;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Wrap(
+      spacing: 12,
+      runSpacing: 10,
+      children: [
+        _ReturnMiniMetric(
+          label: '今日估值',
+          value: todayEstimate,
+          helper:
+              '估算净值 ${formatFundHoldingNumber(estimateNav, 4)} · $estimateTime',
+          color: fundHoldingSignedColor(todayEstimate, cs),
+        ),
+        _ReturnMiniMetric(
+          label: '昨日收益',
+          value: yesterdayReturn,
+          helper: '$yesterdayNavDate 已确认',
+          color: fundHoldingSignedColor(yesterdayReturn, cs),
+        ),
+      ],
+    );
+  }
+}
+
+class _ReturnMiniMetric extends StatelessWidget {
+  const _ReturnMiniMetric({
+    required this.label,
+    required this.value,
+    required this.helper,
+    required this.color,
+  });
+
+  final String label;
+  final double value;
+  final String helper;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minWidth: 132, maxWidth: 220),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: Theme.of(context).textTheme.labelMedium?.copyWith(
+              color: cs.onSurfaceVariant,
+              fontWeight: FontWeight.w800,
+            ),
+          ),
+          const SizedBox(height: 6),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: Alignment.centerLeft,
+            child: Text(
+              formatSignedFundHoldingMoney(value),
+              maxLines: 1,
+              style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                color: color,
+                fontWeight: FontWeight.w900,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            helper,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(
+              context,
+            ).textTheme.labelSmall?.copyWith(color: cs.onSurfaceVariant),
+          ),
+        ],
+      ),
     );
   }
 }

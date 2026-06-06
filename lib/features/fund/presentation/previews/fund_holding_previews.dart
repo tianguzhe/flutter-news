@@ -13,6 +13,8 @@ import '../pages/fund_holding_estimate_page.dart';
 import '../utils/fund_holding_display_helpers.dart';
 import '../widgets/fund_holding_card.dart';
 import '../widgets/fund_holding_detail_sheet.dart';
+import '../widgets/fund_holding_group_card.dart';
+import '../widgets/fund_holding_group_detail_sheet.dart';
 import '../widgets/fund_holding_portfolio_overview.dart';
 import '../widgets/fund_holding_status_pill.dart';
 import '../widgets/fund_holdings_by_channel_section.dart';
@@ -227,6 +229,24 @@ Widget fundHoldingsByChannelEmptyPreview() {
 
 @Preview(
   group: fundHoldingPreviewGroup,
+  name: 'Holding group card',
+  size: Size(430, 128),
+  wrapper: fundPreviewWrapper,
+  theme: fundPreviewTheme,
+)
+Widget fundHoldingGroupCardPreview() {
+  return FundHoldingGroupCard(
+    holdings: _previewHoldings.take(2).toList(),
+    states: _previewEstimates,
+    channel: '天天基金',
+    onRefresh: (_) {},
+    onEdit: (_) {},
+    onRemove: (_) {},
+  );
+}
+
+@Preview(
+  group: fundHoldingPreviewGroup,
   name: 'Holding card - data',
   size: Size(430, 116),
   wrapper: fundPreviewWrapper,
@@ -290,6 +310,24 @@ Widget fundHoldingDetailSheetPreview() {
     onRefresh: () {},
     onEdit: () {},
     onRemove: () {},
+  );
+}
+
+@Preview(
+  group: fundHoldingPreviewGroup,
+  name: 'Holding group detail sheet',
+  size: Size(430, 760),
+  wrapper: fundBoundedPreviewWrapper,
+  theme: fundPreviewTheme,
+)
+Widget fundHoldingGroupDetailSheetPreview() {
+  return FundHoldingGroupDetailSheet(
+    holdings: _previewHoldings.take(2).toList(),
+    states: _previewEstimates,
+    channel: '天天基金',
+    onRefresh: (_) {},
+    onEdit: (_) {},
+    onRemove: (_) {},
   );
 }
 

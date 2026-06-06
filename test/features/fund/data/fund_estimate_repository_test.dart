@@ -139,6 +139,45 @@ void main() {
   );
 
   test(
+    'FundEstimateApi uses newer historical net value as confirmed nav',
+    () async {
+      final dio = Dio();
+      dio.interceptors.add(
+        QueuedInterceptorsWrapper(
+          onRequest: (options, handler) {
+            final isHistory = options.uri.host == 'api.fund.eastmoney.com';
+            final body = isHistory
+                ? '{"Data":{"LSJZList":['
+                      '{"FSRQ":"2026-06-02","DWJZ":"2.1200"},'
+                      '{"FSRQ":"2026-06-01","DWJZ":"2.0800"},'
+                      '{"FSRQ":"2026-05-29","DWJZ":"2.0900"}'
+                      ']}}'
+                : 'jsonpgz({"fundcode":"000171","name":"易方达裕丰回报债券A",'
+                      '"jzrq":"2026-06-01","dwjz":"2.0800","gsz":"2.1000",'
+                      '"gszzl":"0.96","gztime":"2026-06-02 14:30"});';
+            handler.resolve(
+              Response<List<int>>(
+                requestOptions: options,
+                statusCode: 200,
+                data: utf8.encode(body),
+              ),
+            );
+          },
+        ),
+      );
+      final api = FundEstimateApi(dio);
+
+      final estimate = await api.fetchRealtimeEstimate('000171');
+
+      expect(estimate.confirmedNavDate, '2026-06-02');
+      expect(estimate.confirmedNav, closeTo(2.1200, 1e-9));
+      expect(estimate.previousTradingNavDate, '2026-05-29');
+      expect(estimate.previousTradingNav, closeTo(2.0900, 1e-9));
+      expect(estimate.valuationNav, closeTo(2.1200, 1e-9));
+    },
+  );
+
+  test(
     'FundEstimateApi rejects invalid fund codes before network requests',
     () {
       final api = FundEstimateApi(Dio());

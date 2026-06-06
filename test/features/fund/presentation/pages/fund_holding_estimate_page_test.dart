@@ -8,11 +8,12 @@ import 'package:untitled/features/fund/data/repositories/fund_holding_repository
 import 'package:untitled/features/fund/data/repositories/fund_holding_repository_provider.dart';
 import 'package:untitled/features/fund/domain/fund_holding_estimate.dart';
 import 'package:untitled/features/fund/presentation/pages/fund_holding_estimate_page.dart';
+import 'package:untitled/features/fund/presentation/widgets/fund_holding_portfolio_overview.dart';
 import 'package:untitled/core/widgets/num_text.dart';
 
 void main() {
   testWidgets(
-    'groups holdings by channel while keeping different purchase dates separate',
+    'groups channel holdings by fund and shows purchase lots in detail',
     (tester) async {
       await tester.binding.setSurfaceSize(const Size(900, 1000));
       addTearDown(() async => tester.binding.setSurfaceSize(null));
@@ -50,22 +51,30 @@ void main() {
       expect(find.text('支付宝'), findsOneWidget);
       expect(find.textContaining('2 笔'), findsAtLeastNWidgets(1));
       expect(find.text('组合概览'), findsOneWidget);
-      expect(find.text('易方达裕丰回报债券A'), findsNWidgets(2));
-      expect(find.text('000171'), findsAtLeastNWidgets(2));
-      expect(find.textContaining('成本 '), findsAtLeastNWidgets(2));
-      expect(find.text('昨日资产变动'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('+20.00'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('+10.00'), findsAtLeastNWidgets(1));
+      expect(find.text('易方达裕丰回报债券A'), findsOneWidget);
+      expect(find.text('000171'), findsOneWidget);
+      expect(find.textContaining('份额 1500.00'), findsOneWidget);
+      expect(find.textContaining('成本 3025.00'), findsAtLeastNWidgets(1));
+      expect(find.text('今日估值'), findsAtLeastNWidgets(1));
+      expect(find.text('昨日收益'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('2026-06-01 净值基准'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+30.00'), findsAtLeastNWidgets(1));
       expect(find.text('-15.00'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('+95.00'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+125.00'), findsAtLeastNWidgets(1));
 
       await _openFirstHoldingDetail(tester);
 
-      expect(find.text('今日预估收益'), findsAtLeastNWidgets(1));
+      expect(find.text('分笔明细'), findsOneWidget);
+      expect(find.textContaining('2 笔 · 支付宝'), findsOneWidget);
+      expect(find.textContaining('买入 2026-06-01'), findsOneWidget);
+      expect(find.textContaining('买入 2026-06-02'), findsOneWidget);
+      expect(find.text('今日估值'), findsAtLeastNWidgets(1));
+      expect(find.text('昨日收益'), findsAtLeastNWidgets(1));
       expect(find.text('累计收益'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('+4.00%'), findsAtLeastNWidgets(1));
-      expect(find.textContaining('2.1000'), findsAtLeastNWidgets(1));
-      expect(find.text('2100.00'), findsOneWidget);
+      expect(find.textContaining('估算净值 2.1000'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+20.00'), findsAtLeastNWidgets(1));
+      expect(find.textContaining('+10.00'), findsAtLeastNWidgets(1));
+      expect(find.text('3150.00'), findsOneWidget);
       expect(await holdingRepository.listActiveHoldings(), hasLength(2));
     },
   );
@@ -106,7 +115,7 @@ void main() {
     expect(find.text('易方达裕丰回报债券A'), findsOneWidget);
     expect(find.text('000171'), findsAtLeastNWidgets(1));
     expect(find.text('-10.00'), findsAtLeastNWidgets(1));
-    expect(find.text('+80.00'), findsAtLeastNWidgets(1));
+    expect(find.text('+100.00'), findsAtLeastNWidgets(1));
     expect(find.textContaining('+20.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171']);
   });
@@ -353,7 +362,7 @@ void main() {
     expect(find.text('银行'), findsNothing);
     expect(find.text('天天基金'), findsOneWidget);
     expect(find.text('-15.00'), findsAtLeastNWidgets(1));
-    expect(find.text('+860.00'), findsAtLeastNWidgets(1));
+    expect(find.text('+890.00'), findsAtLeastNWidgets(1));
     expect(find.textContaining('+30.00'), findsAtLeastNWidgets(1));
     expect(estimateRepository.requestedCodes, ['000171', '000171']);
   });
@@ -395,7 +404,8 @@ void main() {
 
     await _openFirstHoldingDetail(tester);
 
-    expect(find.text('今日预估收益'), findsOneWidget);
+    expect(find.text('今日估值'), findsAtLeastNWidgets(1));
+    expect(find.text('昨日收益'), findsAtLeastNWidgets(1));
   });
 
   testWidgets('shows previous trading day movement as yesterday return', (
@@ -449,6 +459,384 @@ void main() {
     expect(find.text('累计收益'), findsAtLeastNWidgets(1));
     expect(find.text('0.00'), findsAtLeastNWidgets(1));
   });
+
+  testWidgets(
+    'shows confirmed nav as actual return after net value is published',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1000));
+      addTearDown(() async => tester.binding.setSurfaceSize(null));
+      final holdingRepository = _FakeFundHoldingRepository(
+        initialHoldings: [
+          FundHoldingInput(
+            id: 1,
+            code: '000171',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '天天基金',
+            purchaseNav: 2,
+            fee: 0,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            fundEstimateRepositoryProvider.overrideWithValue(
+              _FakeFundEstimateRepository(
+                estimate: const RealtimeEstimate(
+                  code: '000171',
+                  name: '易方达裕丰回报债券A',
+                  prevNavDate: '2026-06-01',
+                  prevNav: 2.08,
+                  estNav: 2.10,
+                  estChangePct: 0.96,
+                  estTime: '2026-06-02 14:30',
+                  confirmedNavDate: '2026-06-02',
+                  confirmedNav: 2.12,
+                  previousTradingNavDate: '2026-05-29',
+                  previousTradingNav: 2.09,
+                ),
+              ),
+            ),
+            fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+          ],
+          child: const MaterialApp(home: FundHoldingEstimatePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final overview = find.byType(FundPortfolioOverview);
+      expect(
+        find.descendant(of: overview, matching: find.text('实际市值')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('估算市值')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('今日最终收益')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('今日估值')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('昨日收益')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(
+          of: overview,
+          matching: find.textContaining('2026-06-02 净值确认'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: overview,
+          matching: find.textContaining('较 2026-06-01'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('+40.00')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('-10.00')),
+        findsNothing,
+      );
+
+      await _openFirstHoldingDetail(tester);
+
+      expect(find.text('今日最终收益'), findsAtLeastNWidgets(1));
+      expect(find.text('今日估值'), findsNothing);
+      expect(find.textContaining('确认净值 2.1200'), findsOneWidget);
+      expect(find.textContaining('+40.00'), findsAtLeastNWidgets(1));
+    },
+  );
+
+  testWidgets(
+    'keeps portfolio overview estimated until every holding has confirmed nav',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1000));
+      addTearDown(() async => tester.binding.setSurfaceSize(null));
+      final holdingRepository = _FakeFundHoldingRepository(
+        initialHoldings: [
+          FundHoldingInput(
+            id: 1,
+            code: '000171',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '天天基金',
+            purchaseNav: 2,
+            fee: 0,
+          ),
+          FundHoldingInput(
+            id: 2,
+            code: '000385',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '支付宝',
+            purchaseNav: 1.8,
+            fee: 0,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            fundEstimateRepositoryProvider.overrideWithValue(
+              _FakeFundEstimateRepository(
+                estimatesByCode: {
+                  '000171': const RealtimeEstimate(
+                    code: '000171',
+                    name: '易方达裕丰回报债券A',
+                    prevNavDate: '2026-06-01',
+                    prevNav: 2.08,
+                    estNav: 2.10,
+                    estChangePct: 0.96,
+                    estTime: '2026-06-02 14:30',
+                    confirmedNavDate: '2026-06-02',
+                    confirmedNav: 2.12,
+                    previousTradingNavDate: '2026-05-29',
+                    previousTradingNav: 2.09,
+                  ),
+                  '000385': const RealtimeEstimate(
+                    code: '000385',
+                    name: '景顺长城景颐双利债券A',
+                    prevNavDate: '2026-06-01',
+                    prevNav: 1.89,
+                    estNav: 1.91,
+                    estChangePct: 1.06,
+                    estTime: '2026-06-02 14:30',
+                    previousTradingNavDate: '2026-05-29',
+                    previousTradingNav: 1.88,
+                  ),
+                },
+              ),
+            ),
+            fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+          ],
+          child: const MaterialApp(home: FundHoldingEstimatePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final overview = find.byType(FundPortfolioOverview);
+      expect(
+        find.descendant(of: overview, matching: find.text('估算市值')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('实际市值')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('今日估值')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('昨日收益')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('今日最终收益')),
+        findsNothing,
+      );
+
+      await tester.tap(find.text('估算市值'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('4010.00'), findsOneWidget);
+      expect(find.text('4030.00'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'summarizes portfolio estimate time without using one fund as the source',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1000));
+      addTearDown(() async => tester.binding.setSurfaceSize(null));
+      final holdingRepository = _FakeFundHoldingRepository(
+        initialHoldings: [
+          FundHoldingInput(
+            id: 1,
+            code: '000171',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '天天基金',
+            purchaseNav: 2,
+            fee: 0,
+          ),
+          FundHoldingInput(
+            id: 2,
+            code: '000385',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '支付宝',
+            purchaseNav: 1.8,
+            fee: 0,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            fundEstimateRepositoryProvider.overrideWithValue(
+              _FakeFundEstimateRepository(
+                estimatesByCode: {
+                  '000171': const RealtimeEstimate(
+                    code: '000171',
+                    name: '易方达裕丰回报债券A',
+                    prevNavDate: '2026-06-01',
+                    prevNav: 2.08,
+                    estNav: 2.10,
+                    estChangePct: 0.96,
+                    estTime: '2026-06-02 10:30',
+                    previousTradingNavDate: '2026-05-29',
+                    previousTradingNav: 2.09,
+                  ),
+                  '000385': const RealtimeEstimate(
+                    code: '000385',
+                    name: '景顺长城景颐双利债券A',
+                    prevNavDate: '2026-05-31',
+                    prevNav: 1.89,
+                    estNav: 1.91,
+                    estChangePct: 1.06,
+                    estTime: '2026-06-02 14:30',
+                    previousTradingNavDate: '2026-05-30',
+                    previousTradingNav: 1.88,
+                  ),
+                },
+              ),
+            ),
+            fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+          ],
+          child: const MaterialApp(home: FundHoldingEstimatePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final overview = find.byType(FundPortfolioOverview);
+      expect(
+        find.descendant(of: overview, matching: find.text('今日估值')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('昨日收益')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: overview,
+          matching: find.text('多基金净值基准 · 更新至 2026-06-02 14:30'),
+        ),
+        findsOneWidget,
+      );
+      expect(find.textContaining('2026-06-01 净值基准'), findsNothing);
+      expect(find.textContaining('2026-05-31 净值基准'), findsNothing);
+    },
+  );
+
+  testWidgets(
+    'does not show a single actual date when confirmed nav dates differ',
+    (tester) async {
+      await tester.binding.setSurfaceSize(const Size(900, 1000));
+      addTearDown(() async => tester.binding.setSurfaceSize(null));
+      final holdingRepository = _FakeFundHoldingRepository(
+        initialHoldings: [
+          FundHoldingInput(
+            id: 1,
+            code: '000171',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '天天基金',
+            purchaseNav: 2,
+            fee: 0,
+          ),
+          FundHoldingInput(
+            id: 2,
+            code: '000385',
+            purchaseDate: DateTime(2026, 1, 1),
+            shares: 1000,
+            channel: '支付宝',
+            purchaseNav: 1.8,
+            fee: 0,
+          ),
+        ],
+      );
+
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            fundEstimateRepositoryProvider.overrideWithValue(
+              _FakeFundEstimateRepository(
+                estimatesByCode: {
+                  '000171': const RealtimeEstimate(
+                    code: '000171',
+                    name: '易方达裕丰回报债券A',
+                    prevNavDate: '2026-06-01',
+                    prevNav: 2.08,
+                    estNav: 2.10,
+                    estChangePct: 0.96,
+                    estTime: '2026-06-02 14:30',
+                    confirmedNavDate: '2026-06-02',
+                    confirmedNav: 2.12,
+                    previousTradingNavDate: '2026-05-29',
+                    previousTradingNav: 2.09,
+                  ),
+                  '000385': const RealtimeEstimate(
+                    code: '000385',
+                    name: '景顺长城景颐双利债券A',
+                    prevNavDate: '2026-05-31',
+                    prevNav: 1.89,
+                    estNav: 1.91,
+                    estChangePct: 1.06,
+                    estTime: '2026-06-02 14:30',
+                    confirmedNavDate: '2026-06-01',
+                    confirmedNav: 1.92,
+                    previousTradingNavDate: '2026-05-30',
+                    previousTradingNav: 1.88,
+                  ),
+                },
+              ),
+            ),
+            fundHoldingRepositoryProvider.overrideWithValue(holdingRepository),
+          ],
+          child: const MaterialApp(home: FundHoldingEstimatePage()),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final overview = find.byType(FundPortfolioOverview);
+      expect(
+        find.descendant(of: overview, matching: find.text('估算市值')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('实际市值')),
+        findsNothing,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('今日估值')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('昨日收益')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: overview, matching: find.text('今日最终收益')),
+        findsNothing,
+      );
+    },
+  );
 }
 
 Future<void> _addHolding(
@@ -490,28 +878,31 @@ Future<void> _openFirstHoldingDetail(WidgetTester tester) async {
 }
 
 final class _FakeFundEstimateRepository implements FundEstimateRepository {
-  _FakeFundEstimateRepository({RealtimeEstimate? estimate})
-    : _estimate =
-          estimate ??
-          const RealtimeEstimate(
-            code: '000171',
-            name: '易方达裕丰回报债券A',
-            prevNavDate: '2026-06-01',
-            prevNav: 2.08,
-            estNav: 2.1,
-            estChangePct: 0.49,
-            estTime: '2026-06-02 11:30',
-            previousTradingNavDate: '2026-05-29',
-            previousTradingNav: 2.09,
-          );
+  _FakeFundEstimateRepository({
+    RealtimeEstimate? estimate,
+    this._estimatesByCode = const {},
+  }) : _estimate =
+           estimate ??
+           const RealtimeEstimate(
+             code: '000171',
+             name: '易方达裕丰回报债券A',
+             prevNavDate: '2026-06-01',
+             prevNav: 2.08,
+             estNav: 2.1,
+             estChangePct: 0.49,
+             estTime: '2026-06-02 11:30',
+             previousTradingNavDate: '2026-05-29',
+             previousTradingNav: 2.09,
+           );
 
   final requestedCodes = <String>[];
   final RealtimeEstimate _estimate;
+  final Map<String, RealtimeEstimate> _estimatesByCode;
 
   @override
   Future<RealtimeEstimate> fetchRealtimeEstimate(String code) async {
     requestedCodes.add(code);
-    return _estimate;
+    return _estimatesByCode[code] ?? _estimate;
   }
 }
 

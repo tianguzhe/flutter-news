@@ -50,6 +50,11 @@ double fundHoldingYesterdayActualReturn(FundHoldingEstimate estimate) {
 }
 
 double fundHoldingTodayEstimatedReturn(FundHoldingEstimate estimate) =>
+    (estimate.realtimeEstimate.valuationNav -
+        estimate.realtimeEstimate.prevNav) *
+    estimate.input.shares;
+
+double fundHoldingTodayIntradayEstimateReturn(FundHoldingEstimate estimate) =>
     (estimate.realtimeEstimate.estNav - estimate.realtimeEstimate.prevNav) *
     estimate.input.shares;
 

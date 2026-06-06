@@ -4,23 +4,26 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../../core/widgets/num_text.dart';
 import '../../domain/fund_holding_estimate.dart';
 import '../utils/fund_holding_display_helpers.dart';
-import 'fund_holding_detail_sheet.dart';
+import '../utils/fund_holding_group_summary.dart';
+import 'fund_holding_group_detail_sheet.dart';
 
-class FundHoldingCard extends StatelessWidget {
-  const FundHoldingCard({
+class FundHoldingGroupCard extends StatelessWidget {
+  const FundHoldingGroupCard({
     super.key,
-    required this.holding,
-    required this.state,
+    required this.holdings,
+    required this.states,
+    required this.channel,
     required this.onRefresh,
     required this.onEdit,
     required this.onRemove,
   });
 
-  final FundHoldingInput holding;
-  final AsyncValue<FundHoldingEstimate> state;
-  final VoidCallback onRefresh;
-  final VoidCallback onEdit;
-  final VoidCallback onRemove;
+  final List<FundHoldingInput> holdings;
+  final Map<int, AsyncValue<FundHoldingEstimate>> states;
+  final String channel;
+  final ValueChanged<FundHoldingInput> onRefresh;
+  final ValueChanged<FundHoldingInput> onEdit;
+  final ValueChanged<FundHoldingInput> onRemove;
 
   void _showDetail(BuildContext context) {
     showModalBottomSheet(
@@ -28,9 +31,10 @@ class FundHoldingCard extends StatelessWidget {
       isScrollControlled: true,
       useSafeArea: true,
       backgroundColor: Colors.transparent,
-      builder: (_) => FundHoldingDetailSheet(
-        holding: holding,
-        state: state,
+      builder: (_) => FundHoldingGroupDetailSheet(
+        holdings: holdings,
+        states: states,
+        channel: channel,
         onRefresh: onRefresh,
         onEdit: onEdit,
         onRemove: onRemove,
@@ -41,16 +45,18 @@ class FundHoldingCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
-    final accentColor = state.when(
-      loading: () => cs.primary,
-      error: (_, _) => cs.error,
-      data: (e) => fundHoldingSignedColor(
-        e.realtimeEstimate.hasConfirmedNav
-            ? fundHoldingTodayEstimatedReturn(e)
-            : fundHoldingTodayIntradayEstimateReturn(e),
-        cs,
-      ),
+    final summary = summarizeFundHoldingGroup(
+      holdings: holdings,
+      states: states,
     );
+    final primaryReturn = summary.hasFinalReturn
+        ? summary.finalReturn
+        : summary.todayEstimateReturn;
+    final accentColor = summary.hasError
+        ? cs.error
+        : summary.hasCompleteEstimates
+        ? fundHoldingSignedColor(primaryReturn, cs)
+        : cs.primary;
 
     return Material(
       color: Colors.transparent,
@@ -59,96 +65,81 @@ class FundHoldingCard extends StatelessWidget {
         borderRadius: BorderRadius.circular(fundHoldingInnerRadius),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 12, 8, 12),
-          child: state.when(
-            loading: () => _HoldingListShell(
-              accentColor: accentColor,
-              leadingIcon: SizedBox(
-                width: 16,
-                height: 16,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2,
-                  color: accentColor,
-                ),
-              ),
-              title: holding.code,
-              subtitle: '买入 ${formatFundHoldingDate(holding.purchaseDate)}',
-              trailing: Text(
-                '拉取中...',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.onSurfaceVariant,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-            ),
-            error: (_, _) => _HoldingListShell(
-              accentColor: accentColor,
-              leadingIcon: Icon(Icons.error_outline, size: 17, color: cs.error),
-              title: holding.code,
-              subtitle: '买入 ${formatFundHoldingDate(holding.purchaseDate)}',
-              trailing: Text(
-                '拉取失败',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: cs.error,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-            ),
-            data: (estimate) {
-              final realtime = estimate.realtimeEstimate;
-              final hasFinalReturn = realtime.hasConfirmedNav;
-              final todayEstimate = fundHoldingTodayIntradayEstimateReturn(
-                estimate,
-              );
-              final finalReturn = fundHoldingTodayEstimatedReturn(estimate);
-              final yesterdayReturn = fundHoldingYesterdayActualReturn(
-                estimate,
-              );
-              final color = fundHoldingSignedColor(
-                hasFinalReturn ? finalReturn : todayEstimate,
-                cs,
-              );
-              return _HoldingListShell(
-                accentColor: color,
-                leadingIcon: Icon(
-                  Icons.query_stats_rounded,
-                  size: 17,
-                  color: color,
-                ),
-                title: realtime.name,
-                code: realtime.code,
-                subtitle:
-                    '成本 ${formatFundHoldingMoney(estimate.cost)} · ${formatFundHoldingDate(estimate.input.purchaseDate)}',
-                trailing: hasFinalReturn
-                    ? _HoldingReturnSummary(
-                        label: '今日最终',
-                        value: formatSignedFundHoldingMoney(finalReturn),
-                        helper: formatSignedFundHoldingPercent(
-                          realtime.estChangePct,
-                        ),
-                        color: color,
-                      )
-                    : _HoldingEstimateSummary(
-                        todayValue: formatSignedFundHoldingMoney(todayEstimate),
-                        yesterdayValue: formatSignedFundHoldingMoney(
-                          yesterdayReturn,
-                        ),
-                        todayColor: color,
-                        yesterdayColor: fundHoldingSignedColor(
-                          yesterdayReturn,
-                          cs,
-                        ),
-                      ),
-              );
-            },
+          child: _GroupListShell(
+            accentColor: accentColor,
+            leadingIcon: _leadingIcon(summary, accentColor, cs),
+            title: summary.title,
+            code: summary.code.isEmpty ? null : summary.code,
+            subtitle: _subtitle(summary),
+            trailing: _trailing(context, summary, accentColor),
           ),
         ),
       ),
     );
   }
+
+  Widget _leadingIcon(
+    FundHoldingGroupSummary summary,
+    Color accentColor,
+    ColorScheme cs,
+  ) {
+    if (!summary.hasCompleteEstimates && !summary.hasError) {
+      return SizedBox(
+        width: 16,
+        height: 16,
+        child: CircularProgressIndicator(strokeWidth: 2, color: accentColor),
+      );
+    }
+    if (summary.hasError) {
+      return Icon(Icons.error_outline, size: 17, color: cs.error);
+    }
+    return Icon(Icons.query_stats_rounded, size: 17, color: accentColor);
+  }
+
+  String _subtitle(FundHoldingGroupSummary summary) {
+    if (!summary.hasCompleteEstimates) {
+      if (summary.hasError) return '${summary.holdings.length} 笔 · 拉取失败';
+      return '${summary.holdings.length} 笔 · 正在估算';
+    }
+    return '${summary.holdings.length} 笔 · 份额 ${formatFundHoldingNumber(summary.totalShares, 2)} · 成本 ${formatFundHoldingMoney(summary.totalCost)}';
+  }
+
+  Widget _trailing(
+    BuildContext context,
+    FundHoldingGroupSummary summary,
+    Color accentColor,
+  ) {
+    final cs = Theme.of(context).colorScheme;
+    if (!summary.hasCompleteEstimates) {
+      return Text(
+        summary.hasError ? '拉取失败' : '拉取中...',
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(
+          color: summary.hasError ? cs.error : cs.onSurfaceVariant,
+          fontWeight: FontWeight.w700,
+        ),
+      );
+    }
+    if (summary.hasFinalReturn) {
+      return _GroupReturnSummary(
+        label: '今日最终',
+        value: formatSignedFundHoldingMoney(summary.finalReturn),
+        helper: summary.changePct == null
+            ? ''
+            : formatSignedFundHoldingPercent(summary.changePct!),
+        color: accentColor,
+      );
+    }
+    return _GroupEstimateSummary(
+      todayValue: formatSignedFundHoldingMoney(summary.todayEstimateReturn),
+      yesterdayValue: formatSignedFundHoldingMoney(summary.yesterdayReturn),
+      todayColor: accentColor,
+      yesterdayColor: fundHoldingSignedColor(summary.yesterdayReturn, cs),
+    );
+  }
 }
 
-class _HoldingListShell extends StatelessWidget {
-  const _HoldingListShell({
+class _GroupListShell extends StatelessWidget {
+  const _GroupListShell({
     required this.accentColor,
     required this.leadingIcon,
     required this.title,
@@ -224,8 +215,8 @@ class _HoldingListShell extends StatelessWidget {
   }
 }
 
-class _HoldingReturnSummary extends StatelessWidget {
-  const _HoldingReturnSummary({
+class _GroupReturnSummary extends StatelessWidget {
+  const _GroupReturnSummary({
     required this.label,
     required this.value,
     required this.helper,
@@ -266,25 +257,27 @@ class _HoldingReturnSummary extends StatelessWidget {
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
           ),
-          const SizedBox(height: 2),
-          Text(
-            helper,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall?.copyWith(
-              color: cs.onSurfaceVariant,
-              fontWeight: FontWeight.w700,
-              fontFeatures: const [FontFeature.tabularFigures()],
+          if (helper.isNotEmpty) ...[
+            const SizedBox(height: 2),
+            Text(
+              helper,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: cs.onSurfaceVariant,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 }
 
-class _HoldingEstimateSummary extends StatelessWidget {
-  const _HoldingEstimateSummary({
+class _GroupEstimateSummary extends StatelessWidget {
+  const _GroupEstimateSummary({
     required this.todayValue,
     required this.yesterdayValue,
     required this.todayColor,
@@ -303,13 +296,9 @@ class _HoldingEstimateSummary extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          _HoldingMiniMetric(
-            label: '今日估值',
-            value: todayValue,
-            color: todayColor,
-          ),
+          _GroupMiniMetric(label: '今日估值', value: todayValue, color: todayColor),
           const SizedBox(height: 5),
-          _HoldingMiniMetric(
+          _GroupMiniMetric(
             label: '昨日收益',
             value: yesterdayValue,
             color: yesterdayColor,
@@ -320,8 +309,8 @@ class _HoldingEstimateSummary extends StatelessWidget {
   }
 }
 
-class _HoldingMiniMetric extends StatelessWidget {
-  const _HoldingMiniMetric({
+class _GroupMiniMetric extends StatelessWidget {
+  const _GroupMiniMetric({
     required this.label,
     required this.value,
     required this.color,
@@ -388,7 +377,3 @@ class _CodeChip extends StatelessWidget {
     );
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Holding detail bottom sheet
-// ─────────────────────────────────────────────────────────────────────────────

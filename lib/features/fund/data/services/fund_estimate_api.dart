@@ -98,16 +98,23 @@ final class FundEstimateApi {
     final history = parseHistoricalNavList(_decodeBody(response.data));
     if (history.length < 2) return estimate;
 
-    final latestIndex = history.indexWhere(
+    final currentIndex = history.indexWhere(
       (item) => item.date == estimate.prevNavDate,
     );
-    final previous = latestIndex >= 0 && latestIndex + 1 < history.length
-        ? history[latestIndex + 1]
-        : history[1];
+    final latest = history.first;
+    final hasNewerConfirmedNav =
+        currentIndex > 0 ||
+        (currentIndex == -1 && latest.date != estimate.prevNavDate);
+    final previousIndex = currentIndex >= 0 ? currentIndex + 1 : 1;
+    final previous = previousIndex < history.length
+        ? history[previousIndex]
+        : null;
 
     return estimate.copyWith(
-      previousTradingNavDate: previous.date,
-      previousTradingNav: previous.nav,
+      confirmedNavDate: hasNewerConfirmedNav ? latest.date : null,
+      confirmedNav: hasNewerConfirmedNav ? latest.nav : null,
+      previousTradingNavDate: previous?.date,
+      previousTradingNav: previous?.nav,
     );
   }
 

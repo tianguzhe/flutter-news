@@ -61,6 +61,35 @@ void main() {
       expect(result.totalReturnRate, closeTo(85 / 2015, 1e-9));
     });
 
+    test('uses confirmed net value when it has been published', () {
+      final result = calculateFundHoldingEstimate(
+        input: FundHoldingInput(
+          id: 1,
+          code: '000171',
+          purchaseDate: DateTime(2026, 1, 1),
+          shares: 1000,
+          channel: '支付宝',
+          purchaseNav: 2,
+          fee: 0,
+        ),
+        realtimeEstimate: const RealtimeEstimate(
+          code: '000171',
+          name: '易方达裕丰回报债券A',
+          prevNavDate: '2026-06-01',
+          prevNav: 2.08,
+          estNav: 2.1,
+          estChangePct: 0.49,
+          estTime: '2026-06-02 11:30',
+          confirmedNavDate: '2026-06-02',
+          confirmedNav: 2.12,
+        ),
+      );
+
+      expect(result.estimatedValue, 2120);
+      expect(result.totalReturn, 120);
+      expect(result.totalReturnRate, closeTo(0.06, 1e-9));
+    });
+
     test('rejects non-positive shares', () {
       expect(
         () => calculateFundHoldingEstimate(

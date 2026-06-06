@@ -3,7 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../domain/fund_holding_estimate.dart';
 import '../utils/fund_holding_display_helpers.dart';
-import 'fund_holding_card.dart';
+import 'fund_holding_group_card.dart';
 
 class FundHoldingsByChannelSection extends StatelessWidget {
   const FundHoldingsByChannelSection({
@@ -116,22 +116,53 @@ class _ChannelGroupCard extends StatelessWidget {
         .whereType<AsyncData<FundHoldingEstimate>>()
         .map((s) => s.value)
         .toList();
-    final yesterdayActualReturn = estimates.fold<double>(
+    final hasEstimate =
+        holdings.isNotEmpty && estimates.length == holdings.length;
+    final confirmedNavDate = hasEstimate
+        ? _singleValue(
+            estimates.map(
+              (estimate) => estimate.realtimeEstimate.confirmedNavDate ?? '',
+            ),
+          )
+        : null;
+    final hasFinalReturn =
+        confirmedNavDate != null &&
+        estimates.every(
+          (estimate) => estimate.realtimeEstimate.hasConfirmedNav,
+        );
+    final yesterdayReturn = estimates.fold<double>(
       0,
       (s, e) => s + fundHoldingYesterdayActualReturn(e),
     );
-    final hasEstimate = estimates.isNotEmpty;
-    final returnColor = hasEstimate
-        ? fundHoldingSignedColor(yesterdayActualReturn, cs)
-        : cs.primary;
-    final totalValue = estimates.fold<double>(
+    final todayEstimate = estimates.fold<double>(
       0,
-      (sum, estimate) => sum + fundHoldingYesterdayValue(estimate),
+      (sum, estimate) => sum + fundHoldingTodayIntradayEstimateReturn(estimate),
+    );
+    final finalReturn = estimates.fold<double>(
+      0,
+      (sum, estimate) => sum + fundHoldingTodayEstimatedReturn(estimate),
+    );
+    final primaryReturn = hasFinalReturn ? finalReturn : todayEstimate;
+    final returnColor = hasEstimate
+        ? fundHoldingSignedColor(primaryReturn, cs)
+        : cs.primary;
+    final marketValue = estimates.fold<double>(
+      0,
+      (sum, estimate) =>
+          sum +
+          (hasFinalReturn
+              ? estimate.estimatedValue
+              : estimate.realtimeEstimate.estNav * estimate.input.shares),
     );
     final totalCost = estimates.fold<double>(
       0,
       (sum, estimate) => sum + estimate.cost,
     );
+    final holdingsByFund = <String, List<FundHoldingInput>>{};
+    for (final holding in holdings) {
+      holdingsByFund.putIfAbsent(holding.code, () => []).add(holding);
+    }
+    final fundGroups = holdingsByFund.values.toList();
 
     return Container(
       decoration: BoxDecoration(
@@ -187,7 +218,7 @@ class _ChannelGroupCard extends StatelessWidget {
                           const SizedBox(height: 4),
                           Text(
                             hasEstimate
-                                ? '${holdings.length} 笔 · 成本 ${formatFundHoldingMoney(totalCost)} · 昨日市值 ${formatFundHoldingMoney(totalValue)}'
+                                ? '${holdings.length} 笔 · 成本 ${formatFundHoldingMoney(totalCost)} · ${hasFinalReturn ? '实际市值' : '估算市值'} ${formatFundHoldingMoney(marketValue)}'
                                 : '${holdings.length} 笔持仓 · 正在估算',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
@@ -202,11 +233,16 @@ class _ChannelGroupCard extends StatelessWidget {
 
                 if (!hasEstimate) return header;
 
-                final change = _ChannelChangeBadge(
-                  label: '昨日变动',
-                  value: formatSignedFundHoldingMoney(yesterdayActualReturn),
-                  color: returnColor,
-                );
+                final change = hasFinalReturn
+                    ? _ChannelChangeBadge(
+                        label: '今日最终收益',
+                        value: formatSignedFundHoldingMoney(finalReturn),
+                        color: returnColor,
+                      )
+                    : _ChannelEstimateBadges(
+                        todayEstimate: todayEstimate,
+                        yesterdayReturn: yesterdayReturn,
+                      );
 
                 if (constraints.maxWidth < 430) {
                   return Column(
@@ -234,15 +270,16 @@ class _ChannelGroupCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(8, 2, 8, 8),
             child: Column(
               children: [
-                for (int i = 0; i < holdings.length; i++) ...[
-                  FundHoldingCard(
-                    holding: holdings[i],
-                    state: states[holdings[i].id] ?? const AsyncLoading(),
-                    onRefresh: () => onRefresh(holdings[i]),
-                    onEdit: () => onEdit(holdings[i]),
-                    onRemove: () => onRemove(holdings[i]),
+                for (int i = 0; i < fundGroups.length; i++) ...[
+                  FundHoldingGroupCard(
+                    holdings: fundGroups[i],
+                    states: states,
+                    channel: channel,
+                    onRefresh: onRefresh,
+                    onEdit: onEdit,
+                    onRemove: onRemove,
                   ),
-                  if (i < holdings.length - 1)
+                  if (i < fundGroups.length - 1)
                     Divider(
                       height: 1,
                       indent: 14,
@@ -304,6 +341,42 @@ class _ChannelChangeBadge extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ChannelEstimateBadges extends StatelessWidget {
+  const _ChannelEstimateBadges({
+    required this.todayEstimate,
+    required this.yesterdayReturn,
+  });
+
+  final double todayEstimate;
+  final double yesterdayReturn;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        _ChannelChangeBadge(
+          label: '今日估值',
+          value: formatSignedFundHoldingMoney(todayEstimate),
+          color: fundHoldingSignedColor(todayEstimate, cs),
+        ),
+        const SizedBox(width: 8),
+        _ChannelChangeBadge(
+          label: '昨日收益',
+          value: formatSignedFundHoldingMoney(yesterdayReturn),
+          color: fundHoldingSignedColor(yesterdayReturn, cs),
+        ),
+      ],
+    );
+  }
+}
+
+String? _singleValue(Iterable<String> values) {
+  final nonEmptyValues = values.where((value) => value.isNotEmpty).toSet();
+  return nonEmptyValues.length == 1 ? nonEmptyValues.single : null;
 }
 
 class _StatePanel extends StatelessWidget {

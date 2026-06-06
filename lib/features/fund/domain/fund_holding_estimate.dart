@@ -80,7 +80,7 @@ FundHoldingEstimate calculateFundHoldingEstimate({
   }
 
   final cost = input.purchaseNav * input.shares + input.fee;
-  final estimatedValue = realtimeEstimate.estNav * input.shares;
+  final estimatedValue = realtimeEstimate.valuationNav * input.shares;
   final totalReturn = estimatedValue - cost;
 
   return FundHoldingEstimate(
